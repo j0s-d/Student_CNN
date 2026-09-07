@@ -5,21 +5,21 @@
             "name": "Train Teacher",
             "type": "debugpy",
             "request": "launch",
-            "module": "Student_MTCNN.training.teacher_loop",
+            "module": "Student_CNN.training.teacher_loop",
             "console": "integratedTerminal"
-        }
+        },
         {
             "name": "Analyse Camera",
             "type": "debugpy",
             "request": "launch",
-            "module": "Student_MTCNN.pi_export.output_video",
+            "module": "Student_CNN.pi_export.output_video",
             "console": "integratedTerminal"
         },
         {
             "name": "Analyse Image",
             "type": "debugpy",
             "request": "launch",
-            "module": "Student_MTCNN.pi_export.image_analysis",
+            "module": "Student_CNN.pi_export.image_analysis",
             "console": "integratedTerminal"
         },
 
@@ -27,7 +27,7 @@
             "name": "Train Student",
             "type": "debugpy",
             "request": "launch",
-            "module": "Student_MTCNN.training.student_loop",
+            "module": "Student_CNN.training.student_loop",
             "console": "integratedTerminal"
         }
     ]

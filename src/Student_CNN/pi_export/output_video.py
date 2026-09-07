@@ -4,6 +4,7 @@ import numpy as np
 import torchvision.transforms as tf
 from pathlib import Path
 from Student_CNN.student_model.student import FaceDetector
+from Student_CNN.teacher_model.teacher import TeacherFaceDetector
 from torchvision.ops import nms
 
 #---------- Letterbox function, matches trainign data ----------
@@ -53,7 +54,7 @@ def load_model(model_path):
 
     #takes model path input and loads the pytorch checkpoint
     weights = torch.load(model_path)
-    model = FaceDetector()
+    model = TeacherFaceDetector()
     model.load_state_dict(weights["model_state_dict"])
     model.eval()
     return model
@@ -199,7 +200,7 @@ def main():
     #find package root
     package_root = Path(__file__).parent.parent
 
-    model = load_model(package_root / "student_checkpoint.pt")
+    model = load_model(package_root / "teacher_checkpoint.pt")
 
     #checks if CUDA-compatible GPU is available for efficiency, otherwise uses CPU
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
