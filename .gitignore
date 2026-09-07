@@ -1,0 +1,10 @@
+data/wider_face_split/*
+data/WIDER_train/*
+data/WIDER_val/*
+data/WIDER_JSON/train/images/*
+data/WIDER_JSON/train/labels/*
+data/WIDER_JSON/val/images/*
+data/WIDER_JSON/val/labels/*
+data/annotation_converter.py
+src/Student_CNN/test_images/*
+src/Student_CNN/pi_export/image_analysis.py

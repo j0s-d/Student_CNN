@@ -1,0 +1,34 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {           
+            "name": "Train Teacher",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "Student_MTCNN.training.teacher_loop",
+            "console": "integratedTerminal"
+        }
+        {
+            "name": "Analyse Camera",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "Student_MTCNN.pi_export.output_video",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Analyse Image",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "Student_MTCNN.pi_export.image_analysis",
+            "console": "integratedTerminal"
+        },
+
+        {
+            "name": "Train Student",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "Student_MTCNN.training.student_loop",
+            "console": "integratedTerminal"
+        }
+    ]
+}
