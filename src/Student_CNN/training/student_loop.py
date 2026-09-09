@@ -50,6 +50,8 @@ def Validation(model, val_loader, device="cpu"):
     validation_loss = 0.0
     positive_confidence = 0.0
     positive_count = 0.0
+    negative_confidence = 0.0
+    negative_count = 0.0
 
     #disables gradient calculation during validation
     #this saves GPU memory and computation
@@ -82,12 +84,21 @@ def Validation(model, val_loader, device="cpu"):
 
             #get confidence for positive targets, applies mask to the predictions
             positive_mask = targets[..., 0] == 1
-            confidence = torch.sigmoid(predictions[..., 0])[positive_mask]
+            pos_confidence = torch.sigmoid(predictions[..., 0])[positive_mask]
+
+            #get confidence for positive targets, applies mask to the predictions
+            negative_mask = targets[..., 0] == 0
+            neg_confidence = torch.sigmoid(predictions[..., 0])[negative_mask]
 
             #tallies up how confident the model is in locations where faces exist
-            if confidence.numel() > 0:
-                positive_confidence += confidence.mean().item()
-                positive_count += confidence.numel()
+            if pos_confidence.numel() > 0:
+                positive_confidence += pos_confidence.sum().item()
+                positive_count += pos_confidence.numel()
+
+            #tallies up how confident the model is in locations where faces don't exist
+            if neg_confidence.numel() > 0:
+                negative_confidence += neg_confidence.sum().item()
+                negative_count += neg_confidence.numel()
 
 
     #average validation loss across batches
@@ -100,10 +111,18 @@ def Validation(model, val_loader, device="cpu"):
         else 0.0
     )
 
+    #average neg confidence
+    average_neg_confidence = (
+        negative_confidence / negative_count
+        if negative_count > 0
+        else 0.0
+    )
+
     #print statistics
     print(
-        f"validation_loss = {average_val_loss:.4f}"
-        f"positive_confidence = {average_pos_confidence:.4f}"
+        f"validation_loss = {average_val_loss:.4f}, "
+        f"Positive_confidence = {average_pos_confidence:.4f}, "
+        f"Negative_confidence = {average_neg_confidence:.4f}"
     )
 
     return average_val_loss
@@ -131,8 +150,8 @@ def main():
     #creates a dataset instance
     #passes image/target tensors when the data loader is iterated over (__getitem__ is called)
     train_dataset = FaceAsTensorDataset(
-        image_dir=root_directory / "data" / "WIDER_JSON" / "train" / "images",
-        label_dir=root_directory / "data" / "WIDER_JSON" / "train" / "labels",
+        image_dir=root_directory.parent.parent / "data" / "WIDER_JSON" / "train" / "images",
+        label_dir=root_directory.parent.parent / "data" / "WIDER_JSON" / "train" / "labels",
         input_size=128,
         grid_size=16
     )
@@ -156,8 +175,8 @@ def main():
     #same as the training dataset, but for validation data
     #used to evaluate the models performance on unseen data
     val_dataset = FaceAsTensorDataset(
-        image_dir=root_directory / "data" / "WIDER_JSON" / "val" / "images",
-        label_dir=root_directory / "data" / "WIDER_JSON" / "val" / "labels",
+        image_dir=root_directory.parent.parent / "data" / "WIDER_JSON" / "val" / "images",
+        label_dir=root_directory.parent.parent / "data" / "WIDER_JSON" / "val" / "labels",
         input_size=128,
         grid_size=16
     )
@@ -250,8 +269,11 @@ def main():
             #forward pass through the model, which returns predictions for the input images
             predictions = student_model(images)
 
+            #forward pass over teacher, to use its predictions in knowledge distillation
+            teacher_predicitions = teacher_model(images)
+
             #calculate loss between predictions and targets
-            loss = detection_loss(predictions, targets)
+            loss = detection_loss(predictions, targets, teacher_predicion=teacher_predicitions)
 
             #backward pass through model to calculate gradients of the loss with respect to the model parameters
             #if a weight causes a large loss, its gradient will be large
@@ -296,7 +318,7 @@ def main():
                             }
 
                 #we use .pt instead of .pth to prevent confusion with pythons path files
-                torch.save(checkpoint, root_directory / checkpoint_file)
+                torch.save(checkpoint, root_directory / student_checkpoint_file)
 
                 print(
                     f"New best student saved! "

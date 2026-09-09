@@ -9,7 +9,7 @@ from . loss_function import detection_loss
 
 #---------- Load checkpoint if it exists ----------
 
-def LoadCheckpoint(model, optimizer, filename):
+def LoadCheckpoint(model, optimizer, scheduler, filename):
 
     #checks if checkpoint file exists
     if os.path.isfile(filename):
@@ -20,6 +20,7 @@ def LoadCheckpoint(model, optimizer, filename):
         checkpoint = torch.load(filename)
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         start_epoch = checkpoint['epoch']
 
         #print start epoch and checkpoint filename, to confirm that the checkpoint was loaded correctly
@@ -42,6 +43,8 @@ def Validation(model, val_loader, device="cpu"):
     validation_loss = 0.0
     positive_confidence = 0.0
     positive_count = 0.0
+    negative_confidence = 0.0
+    negative_count = 0.0
 
     #disables gradient calculation during validation
     #this saves GPU memory and computation
@@ -74,12 +77,21 @@ def Validation(model, val_loader, device="cpu"):
 
             #get confidence for positive targets, applies mask to the predictions
             positive_mask = targets[..., 0] == 1
-            confidence = torch.sigmoid(predictions[..., 0])[positive_mask]
+            pos_confidence = torch.sigmoid(predictions[..., 0])[positive_mask]
+
+            #get confidence for positive targets, applies mask to the predictions
+            negative_mask = targets[..., 0] == 0
+            neg_confidence = torch.sigmoid(predictions[..., 0])[negative_mask]
 
             #tallies up how confident the model is in locations where faces exist
-            if confidence.numel() > 0:
-                positive_confidence += confidence.mean().item()
-                positive_count += confidence.numel()
+            if pos_confidence.numel() > 0:
+                positive_confidence += pos_confidence.sum().item()
+                positive_count += pos_confidence.numel()
+
+            #tallies up how confident the model is in locations where faces don't exist
+            if neg_confidence.numel() > 0:
+                negative_confidence += neg_confidence.sum().item()
+                negative_count += neg_confidence.numel()
 
 
     #average validation loss across batches
@@ -92,10 +104,18 @@ def Validation(model, val_loader, device="cpu"):
         else 0.0
     )
 
+    #average neg confidence
+    average_neg_confidence = (
+        negative_confidence / negative_count
+        if negative_count > 0
+        else 0.0
+    )
+
     #print statistics
     print(
-        f"validation_loss = {average_val_loss:.4f}"
-        f"positive_confidence = {average_pos_confidence:.4f}"
+        f"validation_loss = {average_val_loss:.4f}, "
+        f"Positive_confidence = {average_pos_confidence:.4f}, "
+        f"Negative_confidence = {average_neg_confidence:.4f}"
     )
 
     return average_val_loss
@@ -124,8 +144,8 @@ def main():
     #creates a dataset instance
     #passes image/target tensors when the data loader is iterated over (__getitem__ is called)
     train_dataset = FaceAsTensorDataset(
-        image_dir=root_directory / "data" / "WIDER_JSON" / "train" / "images",
-        label_dir=root_directory / "data" / "WIDER_JSON" / "train" / "labels",
+        image_dir=root_directory.parent.parent / "data" / "WIDER_JSON" / "train" / "images",
+        label_dir=root_directory.parent.parent / "data" / "WIDER_JSON" / "train" / "labels",
         input_size=128,
         grid_size=16
     )
@@ -149,8 +169,8 @@ def main():
     #same as the training dataset, but for validation data
     #used to evaluate the models performance on unseen data
     val_dataset = FaceAsTensorDataset(
-        image_dir=root_directory / "data" / "WIDER_JSON" / "val" / "images",
-        label_dir=root_directory / "data" / "WIDER_JSON" / "val" / "labels",
+        image_dir=root_directory.parent.parent / "data" / "WIDER_JSON" / "val" / "images",
+        label_dir=root_directory.parent.parent / "data" / "WIDER_JSON" / "val" / "labels",
         input_size=128,
         grid_size=16
     )
@@ -171,7 +191,7 @@ def main():
     #creates an AdamW optimiser for the model parameters
     #weight decay is a regularisation technique that reduces overfitting by penalising large weights
     #this prevents the model from memorising the training data, and encourages it to learn generalisable features
-    optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-5)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=0.0001, weight_decay=1e-2)
 
     #creates a cosine annealing learning rate scheduler 
     #reduces the learning rate over time to help the model converge to a minimum
@@ -180,10 +200,14 @@ def main():
     #initialize start_epoch to 0, will be updated if checkpoint is loaded
     start_epoch = 0
 
+    #set patience counter to 0
+    patience_counter = 0
+    patience = 5
+
     #load checkpoint file
     checkpoint_file = "teacher_checkpoint.pt"
 
-    start_epoch = LoadCheckpoint(model, optimizer, filename=root_directory / checkpoint_file)
+    start_epoch = LoadCheckpoint(model, optimizer, scheduler, filename=root_directory / checkpoint_file)
 
 
     #set best model parameters
@@ -202,10 +226,6 @@ def main():
         #puts model into training mode, which enables dropout and batch normalisation layers to behave differently during training and evaluation
         #for example, nn.BatchNorm2d uses the mean and variance of the current batch during training, but uses the running mean and variance during evaluation
         model.train()
-
-        
-        #update learning rate after each epoch, to help the model converge to a minimum
-        scheduler.step(epoch)
 
         #set running loss and accuracy to 0 for each epoch, to calculate average at the end of the epoch
         running_loss = 0.0
@@ -243,6 +263,9 @@ def main():
             #loss.backward() calculates how much weights should be changed, and optimizer.step() updates the weights
             optimizer.step()
 
+            #update learning rate after each epoch, to help the model converge to a minimum
+            scheduler.step()
+
             #accumulate loss for the epoch, to calculate average loss at the end of the epoch
             running_loss += loss.item()
 
@@ -275,7 +298,8 @@ def main():
                 checkpoint = {      
                             'epoch': epoch + 1,
                             'model_state_dict': model.state_dict(),
-                            'optimizer_state_dict': optimizer.state_dict(),   
+                            'optimizer_state_dict': optimizer.state_dict(),  
+                            'scheduler_state_dict': scheduler.state_dict() 
                             }
 
                 #we use .pt instead of .pth to prevent confusion with pythons path files
@@ -284,6 +308,20 @@ def main():
                 print(
                     f"New best teacher saved! "
                 )
+
+                #reset patience counter
+                patience_counter = 0
+
+            else:
+
+                #increment patience counter
+                patience_counter += 1
+
+        #loop stops early if model does not improve
+        if patience_counter >= patience:
+            print("Early stopping")
+            break
+
 
 
 #call execution of main function if this script is run directly, rather than imported as a module

@@ -61,7 +61,7 @@ def load_model(model_path):
 
 #---------- Decode model outputs into bounding box coordinates ----------
 
-def decode_predictions(prediction, confidence_threshold=0.8, grid_size=16, image_size=128, iou_threshold=0.3):
+def decode_predictions(prediction, confidence_threshold=0.9, grid_size=16, image_size=128, iou_threshold=0.3):
 
     #sanity checks for different inputs:
 

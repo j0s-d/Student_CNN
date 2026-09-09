@@ -8,7 +8,7 @@ import torchvision.transforms.functional as tff
 
 #---------- Filters out faces in WIDER_FACE which are too difficult for the basic model ----------
 
-def filter_annotations(boxes, scale_x, scale_y, min_size=16, max_blur=1, max_occlusion=2, max_pose=1):
+def filter_annotations(boxes, scale_x, scale_y, min_size=8, max_blur=3, max_occlusion=4, max_pose=3):
 
         #stores good boxes
         good_boxes = []
@@ -85,9 +85,13 @@ class FaceAsTensorDataset(Dataset):
         #loads image and converts it to 3-channel RGB, loads JSON labels into a list of bounding boxes
         image = Image.open(image_path).convert("RGB")
 
-        with open(label_path) as f:
-            boxes = json.load(f)
+        try:
+            with open(label_path) as f:
+                boxes = json.load(f)
+        except:
 
+            boxes = []
+            pass
 
 
         #store original image dimensions

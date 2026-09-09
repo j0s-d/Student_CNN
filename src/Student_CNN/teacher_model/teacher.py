@@ -33,7 +33,7 @@ class DepthSepConv(nn.Module):
 
         #normalise and activate results of both convolutions
         self.bn2 = nn.BatchNorm2d(out_channels)
-        self.activation = nn.ReLU(inplace=True)
+        self.activation = nn.ReLU6(inplace=True)
 
     def forward(self, x):
         x = self.depthwise(x)
@@ -81,17 +81,17 @@ class TeacherFaceDetector(nn.Module):
 
         self.block4 = DepthSepConv(256, 256, stride=1)
 
-        self.block5 = DepthSepConv(256, 512, stride=1)  
+        self.block5 = DepthSepConv(256, 256, stride=1)  
 
-        self.block6 = DepthSepConv(512, 512, stride=1)  
+        self.block6 = DepthSepConv(256, 256, stride=1)  
 
-        self.block7 = DepthSepConv(512, 512, stride=1) 
+        self.block7 = DepthSepConv(256, 256, stride=1) 
 
 
         #detection head, reduces the 64 feature channels to 5 detection channels 
         #5 detection channels correspond to [confidence score, x, y, width, height] of the detected face bounding box
         self.head = nn.Conv2d(
-            512,
+            256,
             5,
             kernel_size=1
         )

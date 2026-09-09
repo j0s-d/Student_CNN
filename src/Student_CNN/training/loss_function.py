@@ -4,7 +4,15 @@ import torch.nn.functional as func
 
 #--------- Simple loss function for training the face detection network ----------
 
-def detection_loss(prediction, target, lambda_box=5.0, lambda_noobj=1, lambda_wh = 1.5):
+def detection_loss(prediction, 
+                   target, 
+                   teacher_predicion=None, 
+                   lambda_box=2.0, 
+                   lambda_noobj=0.5, 
+                   lambda_wh = 1.5, 
+                   lambda_kd=1, 
+                   temperature=5 
+                   ):
 
     #seperate the objectness score and bounding box coordinates from the prediction and target tensors
     #this allows two types of loss to be calculated, one for the objectness score and one for the bounding box coordinates
@@ -12,6 +20,12 @@ def detection_loss(prediction, target, lambda_box=5.0, lambda_noobj=1, lambda_wh
     pred_box = prediction[ ... , 1:]
     target_obj = target[ ... , 0]
     target_box = target[ ... , 1:]
+
+    if teacher_predicion != None:
+        teacher_predicion = teacher_predicion.detach() #use this so loss doesn't backpropogate through teacher model
+        teach_obj = teacher_predicion[ ... , 0]
+        teach_box = teacher_predicion[ ... , 1:]
+
 
 
 
@@ -80,8 +94,56 @@ def detection_loss(prediction, target, lambda_box=5.0, lambda_noobj=1, lambda_wh
     else:
         box_loss = torch.tensor(0.0, device=prediction.device)
 
+
+    #---------- Knowledge Distillation --------
+
+    knowdiss_loss = torch.tensor(0.0, device=prediction.device)
+
+    if teacher_predicion != None:
+
+        #calculate soft targets, weighted by a temperature parameter
+        student_soft_obj = torch.sigmoid(pred_obj / temperature)
+
+        #calculate soft targets, weighted by a temperature parameter
+        teacher_soft_obj = torch.sigmoid(teach_obj / temperature)
+
+        obj_knowdiss_loss = func.binary_cross_entropy_with_logits(
+            student_soft_obj,
+            teacher_soft_obj
+        )
+
+        if positive.any():
+
+            #retrieve teacher bounding box coordinates
+            teach_xy = torch.sigmoid(teach_box[..., 0:2])
+            teach_wh = torch.sigmoid(teach_box[..., 2:4])
+
+            #caluclate box loss as previously
+            xy_knowdiss_loss = func.smooth_l1_loss(
+                pred_xy[positive],
+                teach_xy[positive],
+                reduction="sum"
+            ) / num_positive
+
+            wh_knowdiss_loss = func.smooth_l1_loss(
+                pred_wh[positive],
+                teach_wh[positive],
+                reduction="sum"
+            ) / num_positive
+
+            #calculate box loss, weighting wh loss by lambda_wh
+            box_knowdiss_loss = xy_knowdiss_loss + lambda_wh * wh_knowdiss_loss
+
+        else:
+
+            #set box loss to zero if no boxes predicted
+            box_knowdiss_loss = torch.tensor(0.0, device= prediction.device)
+
+        #calculate final knowledge distillation loss, box loss weighted by lambda_box
+        knowdiss_loss = obj_knowdiss_loss + lambda_box * box_knowdiss_loss
+
     #bounding box loss is weighted by lambda_box, as this is the most important part of the loss function, as it is the most difficult to learn
-    total = obj_loss + lambda_box * box_loss
+    total = obj_loss + lambda_box * box_loss + lambda_kd * knowdiss_loss
         
 
     return total 
