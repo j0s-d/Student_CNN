@@ -146,8 +146,7 @@ def main():
     train_dataset = FaceAsTensorDataset(
         image_dir=root_directory.parent.parent / "data" / "WIDER_JSON" / "train" / "images",
         label_dir=root_directory.parent.parent / "data" / "WIDER_JSON" / "train" / "labels",
-        input_size=128,
-        grid_size=16
+        input_size=224,
     )
 
     #creates a data loader for the dataset, loading 64 images at a time
@@ -171,8 +170,7 @@ def main():
     val_dataset = FaceAsTensorDataset(
         image_dir=root_directory.parent.parent / "data" / "WIDER_JSON" / "val" / "images",
         label_dir=root_directory.parent.parent / "data" / "WIDER_JSON" / "val" / "labels",
-        input_size=128,
-        grid_size=16
+        input_size=224,
     )
 
     val_loader = DataLoader(

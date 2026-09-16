@@ -2,6 +2,20 @@
     "version": "0.2.0",
     "configurations": [
         {           
+            "name": "Teacher Parameters",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "Student_CNN.teacher_model.teacher",
+            "console": "integratedTerminal"
+        },
+        {           
+            "name": "Student Parameters",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "Student_CNN.student_model.student",
+            "console": "integratedTerminal"
+        },
+        {           
             "name": "Train Teacher",
             "type": "debugpy",
             "request": "launch",

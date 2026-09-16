@@ -1,12 +1,15 @@
 #import modules
 import os
 import torch
+import numpy as np
+import matplotlib.pyplot as plt
 from pathlib import Path
 from torch.utils.data import DataLoader
-from Student_CNN.student_model.student import FaceDetector
+from Student_CNN.student_model.student import StudentFaceDetector
 from Student_CNN.teacher_model.teacher import TeacherFaceDetector
 from . dataset import FaceAsTensorDataset
 from . loss_function import detection_loss
+from torchvision.ops import box_iou
 
 #---------- Load checkpoint if it exists ----------
 
@@ -39,6 +42,121 @@ def LoadCheckpoint(student_model, teacher_model, optimizer, filename, student, t
         print(f"No student checkpoint found at '{filename}'")
         return 0
 
+#---------- Decode precitions for validation metrics ----------
+
+def IoUAnalysis(predictions, targets, confidence_threshold = 0.8, iou_threshold = 0.3):
+    
+    #sanity checks
+    if predictions.dim() != 3:
+        raise ValueError(
+            f"Expected predictions [B,N,5], "
+            f"got {predictions.shape}"
+        )
+
+    if targets.dim() != 3:
+        raise ValueError(
+            f"Expected targets [B,N,5], "
+            f"got {targets.shape}"
+        )
+    
+    #tensor shape from predictions
+    batch, width, height, _ = predictions.shape
+
+    #initialise stats to calculate precision/recall
+    tp = 0
+    fp = 0
+    fn = 0
+
+    for b in range(batch):
+
+        #predictions/targets for individual images
+        pred = predictions[b]
+        target = targets[b]
+
+        #only use predictions above confidence threshold by applying mask 
+        pred_mask = torch.sigmoid(pred[:, 0]) >= confidence_threshold
+        pred = pred[pred_mask]
+
+        #gather positive ground truth cells
+        target_mask = target[:, 0] == 1
+        target = target[target_mask]
+
+        #no predictions/targets, tp, fp, fn all equal 0
+        if len(pred) == 0 and len(target) == 0:
+            continue
+
+        #no predictions, fn equal no. targets
+        if len(pred) == 0:
+            fn += len(target)
+            continue
+
+        #no targets, fp = no. predictions
+        if len(target) == 0:
+            fp += len(pred)
+            continue
+
+        #convert model probabilities to coordinates
+        pred_cx = torch.sigmoid(pred[:, 1])
+        pred_cy = torch.sigmoid(pred[:, 2])
+        pred_width = torch.sigmoid(pred[:, 3])
+        pred_height = torch.sigmoid(pred[:, 4])
+
+        #create box with absolute coordinates
+        pred_boxes = torch.stack([
+            pred_cx - pred_width / 2,
+            pred_cy - pred_height / 2,
+            pred_cx + pred_width / 2,
+            pred_cy + pred_height / 2,
+        ], dim=1)
+
+        #extract coordinates from target
+        target_cx = target[:, 1]
+        target_cy = target[:, 2]
+        target_width = target[:, 3]
+        target_height = target[:, 4]
+
+        #create box with absolute target coordinates
+        target_boxes = torch.stack([
+            target_cx - target_width / 2,
+            target_cy - target_height / 2,
+            target_cx + target_width / 2,
+            target_cy + target_height / 2,
+        ], dim=1)
+
+        ious = box_iou(pred_boxes, target_boxes)
+
+        matched_predictions = set()
+        matched_targets = set()
+
+        match_sort = torch.argsort(ious.flatten(), descending=True)
+
+        for flat in match_sort:
+            p = (flat // ious.shape[1]).item()
+            t = (flat % ious.shape[1]).item()
+
+            #only count ious that overlap greater than threshold
+            if ious[p, t] < iou_threshold:
+                break
+
+            #prevents predictions and targets being matched more than once
+            if p in matched_predictions or t in matched_targets:
+                continue
+
+            matched_predictions.add(p)
+            matched_targets.add(t)
+
+        #summary of statistics for the batch
+        batch_tp = len(matched_predictions)
+        batch_fp = len(pred) - batch_tp
+        batch_fn = len(target) - batch_tp
+
+        #tally batch to total statistics
+        tp += batch_tp
+        fp += batch_fp
+        fn += batch_fn
+
+    return tp, fp, fn
+
 #---------- Validation loop ----------
 
 def Validation(model, val_loader, device="cpu"):
@@ -48,10 +166,10 @@ def Validation(model, val_loader, device="cpu"):
 
     #initialise variables
     validation_loss = 0.0
-    positive_confidence = 0.0
-    positive_count = 0.0
-    negative_confidence = 0.0
-    negative_count = 0.0
+    true_positives = 0
+    false_positives = 0
+    false_negatives = 0
+
 
     #disables gradient calculation during validation
     #this saves GPU memory and computation
@@ -82,50 +200,28 @@ def Validation(model, val_loader, device="cpu"):
             #tally validation loss
             validation_loss += loss.item()
 
-            #get confidence for positive targets, applies mask to the predictions
-            positive_mask = targets[..., 0] == 1
-            pos_confidence = torch.sigmoid(predictions[..., 0])[positive_mask]
-
-            #get confidence for positive targets, applies mask to the predictions
-            negative_mask = targets[..., 0] == 0
-            neg_confidence = torch.sigmoid(predictions[..., 0])[negative_mask]
-
-            #tallies up how confident the model is in locations where faces exist
-            if pos_confidence.numel() > 0:
-                positive_confidence += pos_confidence.sum().item()
-                positive_count += pos_confidence.numel()
-
-            #tallies up how confident the model is in locations where faces don't exist
-            if neg_confidence.numel() > 0:
-                negative_confidence += neg_confidence.sum().item()
-                negative_count += neg_confidence.numel()
-
+            #calculate statistics for precision/recall and tally
+            tp, fp, fn = IoUAnalysis(predictions, targets)
+            true_positives += tp
+            false_positives += fp
+            false_negatives += fn
 
     #average validation loss across batches
     average_val_loss = validation_loss / len(val_loader)
 
-    #average pos confidence
-    average_pos_confidence = (
-        positive_confidence / positive_count
-        if positive_count > 0
-        else 0.0
-    )
+    #calculate precision/recall and avoid division by 0
+    precision = true_positives / (true_positives + false_positives) if true_positives + false_positives > 0 else 0.0
+    recall = true_positives / (true_positives + false_negatives) if true_positives + false_negatives > 0 else 0.0
 
-    #average neg confidence
-    average_neg_confidence = (
-        negative_confidence / negative_count
-        if negative_count > 0
-        else 0.0
-    )
 
-    #print statistics
+    #print statistics, keeping to 4 significant figures
     print(
-        f"validation_loss = {average_val_loss:.4f}, "
-        f"Positive_confidence = {average_pos_confidence:.4f}, "
-        f"Negative_confidence = {average_neg_confidence:.4f}"
+        f"Validation_loss = {average_val_loss:.4f}, "
+        f"Validation_precision = {precision:.4f}, "
+        f"Validation_recall = {recall:.4f}"
     )
 
-    return average_val_loss
+    return average_val_loss, precision, recall
 
 #put all code in a main function, so that it can be called when the script is run directly 
 #but not when it is imported as a module
@@ -136,6 +232,13 @@ def main():
 
     #EPOCHS is the number of times the model will see the entire dataset during training
     EPOCHS = 30
+
+    #initialses lists to store training data for plotting later
+    csv_directory = root_directory / "training" / "history"
+    history_train_loss = []
+    history_val_loss = []
+    history_precision = []
+    history_recall = []
 
     #checks if CUDA-compatible GPU is available for efficiency, otherwise uses CPU
     DEVICE = (
@@ -152,8 +255,7 @@ def main():
     train_dataset = FaceAsTensorDataset(
         image_dir=root_directory.parent.parent / "data" / "WIDER_JSON" / "train" / "images",
         label_dir=root_directory.parent.parent / "data" / "WIDER_JSON" / "train" / "labels",
-        input_size=128,
-        grid_size=16
+        input_size=224,
     )
 
     #creates a data loader for the dataset, loading 64 images at a time
@@ -177,8 +279,7 @@ def main():
     val_dataset = FaceAsTensorDataset(
         image_dir=root_directory.parent.parent / "data" / "WIDER_JSON" / "val" / "images",
         label_dir=root_directory.parent.parent / "data" / "WIDER_JSON" / "val" / "labels",
-        input_size=128,
-        grid_size=16
+        input_size=224,
     )
 
     val_loader = DataLoader(
@@ -192,7 +293,7 @@ def main():
     )
 
     #puts model onto device
-    student_model = FaceDetector().to(DEVICE)
+    student_model = StudentFaceDetector().to(DEVICE)
     teacher_model = TeacherFaceDetector().to(DEVICE)
 
 
@@ -208,7 +309,11 @@ def main():
     #initialize start_epoch to 0, will be updated if checkpoint is loaded
     start_epoch = 0
 
-    #load checkpoint file
+    #set patience counter to 0
+    patience_counter = 0
+    patience = 5
+
+    #load checkpoint files
     student_checkpoint_file = "student_checkpoint.pt"
     teacher_checkpoint_file = "teacher_checkpoint.pt"
 
@@ -291,6 +396,9 @@ def main():
         #calculate average loss for the epoch, to monitor training progress
         average_loss = (running_loss / len(train_loader))
 
+        #append to history list
+        history_train_loss.append(average_loss)
+
         #print training and validation metrics for the epoch, to monitor training progress
         print(
             #format is "metric_name = metric_value", with 4 decimal places for loss, precision, and recall
@@ -302,7 +410,12 @@ def main():
             print("Validating...")
 
             #validate, and return validation loss
-            val_loss = Validation(student_model, val_loader=val_loader, device=DEVICE)
+            val_loss, precision, recall = Validation(student_model, val_loader=val_loader, device=DEVICE)
+
+            #append values to history lists
+            history_val_loss.append(val_loss)
+            history_precision.append(precision)
+            history_recall.append(recall)
 
             #check for best valuation loss and save model if its good
             if val_loss < best_val_loss:
@@ -324,6 +437,52 @@ def main():
                     f"New best student saved! "
                 )
 
+                #reset patience counter
+                patience_counter = 0
+
+            else:
+
+                #increment patience counter
+                patience_counter += 1
+
+        #loop stops early if model does not improve
+        if patience_counter >= patience:
+            print("Early stopping")
+            break
+
+
+    #--------- Plot and save data --------
+
+    plt.figure(1)
+    plt.plot(history_train_loss, 'o-')
+    plt.title("Training Loss")
+    plt.savefig(csv_directory / "training/train_loss.jpg")
+    plt.show()
+
+    plt.figure(2)
+    plt.plot(history_val_loss, 'g-')
+    plt.title("Validation Loss")
+    plt.savefig(csv_directory / "val/val_loss.jpg")
+    plt.show()
+
+    plt.figure(3)
+    plt.plot(history_precision, 'r-')
+    plt.title("Precision")
+    plt.savefig(csv_directory / "val/precision.jpg")
+    plt.show()
+
+    plt.figure(4)
+    plt.plot(history_recall, 'b-')
+    plt.title("Recall")
+    plt.savefig(csv_directory / "val/recall.jpg")
+    plt.show()
+    
+
+    #save history lists as csv files
+    np.savetxt(csv_directory / "training/train_loss.csv", history_train_loss, delimiter=",")
+    np.savetxt(csv_directory / "val/val_loss.csv", history_val_loss, delimiter=",")
+    np.savetxt(csv_directory / "val/precision.csv", history_precision, delimiter=",")
+    np.savetxt(csv_directory / "val/recall.csv", history_recall, delimiter=",")
 
 #call execution of main function if this script is run directly, rather than imported as a module
 if __name__ == "__main__":

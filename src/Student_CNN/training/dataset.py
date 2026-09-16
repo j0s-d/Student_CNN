@@ -50,14 +50,16 @@ def filter_annotations(boxes, scale_x, scale_y, min_size=8, max_blur=3, max_occl
 
 class FaceAsTensorDataset(Dataset):
 
-    #image size is 128x128, grid size is 16x16
+    #image size is 224x224
     #images and labels stored in separate directories (image_dir and label_dir respectively)
     #they have the same filename but different extensions (e.g. image_1.jpg and image_1.json)
-    def __init__(self, image_dir, label_dir, input_size=128, grid_size=16):
+    def __init__(self, image_dir, label_dir, input_size=224):
         self.image_dir = Path(image_dir)
         self.label_dir = Path(label_dir)
         self.input_size = input_size
-        self.grid_size = grid_size
+        self.small_grid_size = input_size // 8
+        self.medium_grid_size = input_size // 16
+        self.large_grid_size = input_size // 32
 
         #finds all image paths and sorts them to ensure they are in the same order as the labels
         self.images = sorted(
@@ -113,7 +115,7 @@ class FaceAsTensorDataset(Dataset):
         #call the filter function to return easier targets
         boxes = filter_annotations(boxes, scale_x, scale_y)
 
-        #create a 128x128 RGB canvas
+        #create an RGB canvas
         canvas = Image.new("RGB", (self.input_size, self.input_size), (0, 0, 0))  #black padding
 
         #center the image
@@ -136,19 +138,28 @@ class FaceAsTensorDataset(Dataset):
         #create a target tensor of shape (grid_size, grid_size, 5)
         #last dimension corresponds to [confidence score, x, y, width, height] of the detected face bounding box
         #this is the same format as the output of the FaceDetector model, so it can be used to calculate the loss during training
-        target = torch.zeros(
-            self.grid_size,
-            self.grid_size,
+        small_target = torch.zeros(
+            self.small_grid_size,
+            self.small_grid_size,
             5
         )
 
+        medium_target = torch.zeros(
+            self.medium_grid_size,
+            self.medium_grid_size,
+            5
+        )
+
+        large_target = torch.zeros(
+            self.large_grid_size,
+            self.large_grid_size,
+            5
+        )
 
         #loops through each bounding box in the JSON labels
         #extra information is ignored, as we only care about the bounding box coordinates
         if len(boxes) !=0:
             for box in boxes:
-
-
 
                 #extracts annotation data in WIDER FACE format: [x, y, width, height]
                 x1, y1, box_width, box_height = box["bbox"]
@@ -160,7 +171,6 @@ class FaceAsTensorDataset(Dataset):
                 #set other corner coordinates
                 x2 = x1 + box_width
                 y2 = y1 + box_height
-                
 
                 #padding
                 pad_x = (self.input_size - new_width) // 2
@@ -193,26 +203,42 @@ class FaceAsTensorDataset(Dataset):
                 if not (0 <= cx_norm <= 1 and 0 <= cy_norm <= 1):
                     continue
 
+                #face size is maximum length of box (might change to area)
+                face_size = max(width, height)
+
+                #assigns faces to the correct sized target and adjusts grid size
+                if face_size < 32:
+                    target = small_target
+                    grid_size = self.small_grid_size
+                elif face_size < 64:
+                    target = medium_target
+                    grid_size = self.medium_grid_size
+
+                else:
+                    target = large_target
+                    grid_size = self.large_grid_size
+
                 #calculate the grid cell
-                cell_x = cx_norm * self.grid_size
-                cell_y = cy_norm * self.grid_size
+                cell_x = cx_norm * grid_size
+                cell_y = cy_norm * grid_size
 
                 #grid cells go from 0-15, so we have to clamp at 15 to prevent cell 16 being accessed
-                grid_x = min(int(cell_x), self.grid_size - 1)
-                grid_y = min(int(cell_y), self.grid_size - 1)
-
-                #offset within cell
-                x_offset = cell_x - grid_x
-                y_offset = cell_y - grid_y
+                grid_x = min(int(cell_x), grid_size - 1)
+                grid_y = min(int(cell_y), grid_size - 1)
 
                 #assign target
                 if target[grid_y, grid_x, 0] == 0:
                     target[grid_y, grid_x, 0] = 1.0
-                    target[grid_y, grid_x, 1] = x_offset
-                    target[grid_y, grid_x, 2] = y_offset
-
-            
+                    target[grid_y, grid_x, 1] = cx_norm
+                    target[grid_y, grid_x, 2] = cy_norm   
                     target[grid_y, grid_x, 3] = w_norm
                     target[grid_y, grid_x, 4] = h_norm
 
+        #same processing as model uses- flattens predictions into 1D list 
+        small_target = small_target.reshape(-1, 5)
+        medium_target = medium_target.reshape(-1, 5)
+        large_target = large_target.reshape(-1, 5)
+
+        #concatenates predictions into a list of small-grid followed by medium-grid then large-grid 
+        target = torch.cat([small_target, medium_target, large_target], dim=0)
         return image, target

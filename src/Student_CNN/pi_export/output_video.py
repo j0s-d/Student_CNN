@@ -9,7 +9,7 @@ from torchvision.ops import nms
 
 #---------- Letterbox function, matches trainign data ----------
 
-def letterbox_image(image, target_size=128):
+def letterbox_image(image, target_size=224):
 
     #image.shape outputs height, width, no. channels
     image_height, image_width, _ = image.shape
@@ -61,74 +61,37 @@ def load_model(model_path):
 
 #---------- Decode model outputs into bounding box coordinates ----------
 
-def decode_predictions(prediction, confidence_threshold=0.9, grid_size=16, image_size=128, iou_threshold=0.3):
+def decode_predictions(prediction, confidence_threshold=0.8, image_size=224, iou_threshold=0.3):
 
     #sanity checks for different inputs:
 
     #check if single image, and store in a variable
-    single_image = prediction.dim() == 3
+    single_image = prediction.dim() == 2
 
     #if single image, add batch dimension
     if single_image:
         prediction = prediction.unsqueeze(0)
 
     #if neither single or batched image, raise an error
-    elif prediction.dim() != 4:
+    elif prediction.dim() != 3:
         raise ValueError(
-            f"Expected [H,W,5] or [B,H,W,5], "
+            f"Expected [N,5] or [B,N,5], "
             f"got {prediction.shape}"
         )
 
     #store the device the predictions are on
     device = prediction.device
 
-    #create grid to apply coordinates to
-    gy, gx = torch.meshgrid(
-        torch.arange(grid_size, device=device),
-        torch.arange(grid_size, device=device),
-        indexing="ij"
-    )
-
-    #convert from torch tensors to floats
-    gx = gx.float()
-    gy = gy.float()
-
-    #flattens grid, turns 2d gx and gy into 1d 16x16 grid
-    gx = gx.reshape(-1)
-    gy = gy.reshape(-1)
-
-
-    #[B, H, W, 5] -> [B, H*W, 5]
-    #flattens predictions, H*W = cell no.
-    prediction = prediction.reshape(
-        prediction.size(0),
-        -1,
-        5
-    )
-
-
     #decode confidence probability into confidence value
     confidence = torch.sigmoid(prediction[..., 0])
 
     #decode offset probability into relative offset
-    x_offset = torch.sigmoid(prediction[..., 1])
-    y_offset = torch.sigmoid(prediction[..., 2])
+    cx = torch.sigmoid(prediction[..., 1]) * image_size
+    cy = torch.sigmoid(prediction[..., 2]) * image_size
 
     #decode width/height probability into values relative to image
     width = torch.sigmoid(prediction[..., 3]) * image_size
     height = torch.sigmoid(prediction[..., 4]) * image_size
-
-    cx = (
-        (gx.unsqueeze(0) + x_offset)
-        / grid_size
-        * image_size
-    )
-
-    cy = (
-        (gy.unsqueeze(0) + y_offset)
-        / grid_size
-        * image_size
-    )
 
     x1 = cx - width / 2
     y1 = cy - height / 2
