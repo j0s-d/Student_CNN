@@ -9,11 +9,11 @@ from Student_CNN.student_model.student import StudentFaceDetector
 from Student_CNN.teacher_model.teacher import TeacherFaceDetector
 from . dataset import FaceAsTensorDataset
 from . loss_function import detection_loss
-from torchvision.ops import box_iou
+from torchvision.ops import box_iou, nms
 
 #---------- Load checkpoint if it exists ----------
 
-def LoadCheckpoint(student_model, teacher_model, optimizer, filename, student, teacher):
+def LoadCheckpoint(student_model, teacher_model, optimizer, scheduler, filename, student, teacher):
 
     #checks if checkpoint file exists
     if os.path.isfile(filename / student):
@@ -24,27 +24,129 @@ def LoadCheckpoint(student_model, teacher_model, optimizer, filename, student, t
         checkpoint = torch.load(filename / student)
         student_model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         start_epoch = checkpoint['epoch']
+        best_f1 = checkpoint['best_f1']
 
         #print start epoch and checkpoint filename, to confirm that the checkpoint was loaded correctly
         print(f"Loaded student checkpoint '{filename} / {student}' (epoch {start_epoch})")
 
-        if os.path.isfile(filename / teacher):
-            print(f"Loading teacher checkpoint")
+        #if using knowledge distillation, load teacher model
+        if teacher_model != None:
+            if os.path.isfile(filename / teacher):
+                print(f"Loading teacher checkpoint")
 
-            checkpoint = torch.load(filename / teacher)
-            teacher_model.load_state_dict(checkpoint['model_state_dict'])
-            print(f"Loaded teacher checkpoint '{filename} / {teacher}'")
+                checkpoint = torch.load(filename / teacher)
+                teacher_model.load_state_dict(checkpoint['model_state_dict'])
+                print(f"Loaded teacher checkpoint '{filename} / {teacher}'")
 
-        return start_epoch
+        return start_epoch, best_f1
 
     else:
         print(f"No student checkpoint found at '{filename}'")
-        return 0
+        return 0, float(0)
+
+#------- Decode targets -------
+
+def DecodeTargets(targets, grid_size):
+
+    device = targets.device
+
+    grid_y, grid_x = torch.meshgrid(
+        torch.arange(grid_size, device=device),
+        torch.arange(grid_size, device=device),
+        indexing="ij"
+    )
+
+    grid_x = grid_x.reshape(1, -1)
+    grid_y = grid_y.reshape(1, -1)
+
+    obj = targets[..., 0]
+
+    rel_x = targets[..., 1]
+    rel_y = targets[..., 2]
+
+    width = targets[..., 3]
+    height = targets[..., 4]
+
+    cx = (grid_x + rel_x) / grid_size
+    cy = (grid_y + rel_y) / grid_size
+
+    return torch.stack([
+        obj,
+        cx,
+        cy,
+        width,
+        height
+    ], dim=-1)
+
+#---------- Decode different detection heads separately --------
+
+def DecodeHead(pred, grid_size):
+    B, N, C = pred.shape
+
+    expected_cells = grid_size * grid_size
+
+    assert N == expected_cells, (
+        f"Expected {expected_cells} cells for "
+        f"{grid_size}x{grid_size} head, got {N}"
+    )
+
+    assert C == 5, (
+        f"Expected 5 prediction values, got {C}"
+    )
+
+    # reshape flattened head back to grid
+    pred = pred.reshape(B, grid_size, grid_size, 5)
+
+    # objectness
+    confidence = torch.sigmoid(pred[..., 0])
+
+    # relative position inside cell
+    tx = torch.sigmoid(pred[..., 1])
+    ty = torch.sigmoid(pred[..., 2])
+
+    # width / height relative to image
+    width = torch.sigmoid(pred[..., 3])
+    height = torch.sigmoid(pred[..., 4])
+
+    # create grid coordinates
+    device = pred.device
+
+    grid_y, grid_x = torch.meshgrid(
+        torch.arange(grid_size, device=device),
+        torch.arange(grid_size, device=device),
+        indexing="ij"
+    )
+
+    grid_x = grid_x.float()
+    grid_y = grid_y.float()
+
+    # convert cell-relative coordinates
+    # into image-relative coordinates
+    cx = (grid_x + tx) / grid_size
+    cy = (grid_y + ty) / grid_size
+
+    decoded = torch.stack(
+        [
+            confidence,
+            cx,
+            cy,
+            width,
+            height
+        ],
+        dim=-1
+    )
+
+    return decoded.reshape(B, -1, 5)
 
 #---------- Decode precitions for validation metrics ----------
 
-def IoUAnalysis(predictions, targets, confidence_threshold = 0.8, iou_threshold = 0.3):
+def IoUAnalysis(predictions, 
+                targets, 
+                confidence_threshold = 0.8, 
+                nms_threshold = 0.1, 
+                iou_threshold = 0.3):
     
     #sanity checks
     if predictions.dim() != 3:
@@ -60,7 +162,7 @@ def IoUAnalysis(predictions, targets, confidence_threshold = 0.8, iou_threshold 
         )
     
     #tensor shape from predictions
-    batch, width, height, _ = predictions.shape
+    batch, _,  _ = predictions.shape
 
     #initialise stats to calculate precision/recall
     tp = 0
@@ -74,7 +176,7 @@ def IoUAnalysis(predictions, targets, confidence_threshold = 0.8, iou_threshold 
         target = targets[b]
 
         #only use predictions above confidence threshold by applying mask 
-        pred_mask = torch.sigmoid(pred[:, 0]) >= confidence_threshold
+        pred_mask = pred[:, 0] >= confidence_threshold
         pred = pred[pred_mask]
 
         #gather positive ground truth cells
@@ -96,10 +198,10 @@ def IoUAnalysis(predictions, targets, confidence_threshold = 0.8, iou_threshold 
             continue
 
         #convert model probabilities to coordinates
-        pred_cx = torch.sigmoid(pred[:, 1])
-        pred_cy = torch.sigmoid(pred[:, 2])
-        pred_width = torch.sigmoid(pred[:, 3])
-        pred_height = torch.sigmoid(pred[:, 4])
+        pred_cx = pred[:, 1]
+        pred_cy = pred[:, 2]
+        pred_width = pred[:, 3]
+        pred_height = pred[:, 4]
 
         #create box with absolute coordinates
         pred_boxes = torch.stack([
@@ -122,6 +224,13 @@ def IoUAnalysis(predictions, targets, confidence_threshold = 0.8, iou_threshold 
             target_cx + target_width / 2,
             target_cy + target_height / 2,
         ], dim=1)
+
+        #apply nms
+        scores = pred[:, 0]
+        keep = nms(pred_boxes, scores, nms_threshold)
+
+        pred_boxes = pred_boxes[keep] 
+        pred = pred[keep] 
 
         ious = box_iou(pred_boxes, target_boxes)
 
@@ -173,35 +282,62 @@ def Validation(model, val_loader, device="cpu"):
 
     #disables gradient calculation during validation
     #this saves GPU memory and computation
-    with torch.no_grad():
+    with torch.inference_mode():
 
-        for images, targets in val_loader:
+        for images, small_targets, medium_targets, large_targets in val_loader:
 
+            
             #move validation data to device used for training
             images = images.to(
                 device,
                 non_blocking=True
             )
 
-            targets = targets.to(
+            small_targets = small_targets.to(
                 device,
                 non_blocking=True
             )
 
-            #forward pass only through the model
-            predictions = model(images)
+            medium_targets = medium_targets.to(
+                device,
+                non_blocking=True
+            )
 
+            large_targets = large_targets.to(
+                device,
+                non_blocking=True
+            )
+
+            #concatrate targets 
+            targets = torch.cat([small_targets, medium_targets, large_targets], dim=1)
+
+            #forward pass only through the model
+            small_faces, medium_faces, large_faces = model(images)
+
+            raw_predictions = torch.cat([small_faces, medium_faces, large_faces], dim=1)
+            
             #calculate validation loss
             loss = detection_loss(
-                predictions,
+                raw_predictions,
                 targets
             )
 
             #tally validation loss
             validation_loss += loss.item()
 
+            small = DecodeHead(small_faces, 224 // 8)
+            medium = DecodeHead(medium_faces, 224 // 16)
+            large = DecodeHead(large_faces, 224 // 32)
+
+            small_target = DecodeTargets(small_targets, 224 // 8)
+            medium_target = DecodeTargets(medium_targets, 224 // 16)
+            large_target = DecodeTargets(large_targets, 224 // 32)
+
+            decoded_predictions = torch.cat([small, medium, large], dim=1)
+            decoded_targets = torch.cat([small_target, medium_target, large_target], dim=1)
+
             #calculate statistics for precision/recall and tally
-            tp, fp, fn = IoUAnalysis(predictions, targets)
+            tp, fp, fn = IoUAnalysis(decoded_predictions, decoded_targets)
             true_positives += tp
             false_positives += fp
             false_negatives += fn
@@ -213,15 +349,23 @@ def Validation(model, val_loader, device="cpu"):
     precision = true_positives / (true_positives + false_positives) if true_positives + false_positives > 0 else 0.0
     recall = true_positives / (true_positives + false_negatives) if true_positives + false_negatives > 0 else 0.0
 
+    #calculate f1
+    f1 = (
+    2 * precision * recall /
+    (precision + recall)
+    if precision + recall > 0
+    else 0.0
+    )
 
     #print statistics, keeping to 4 significant figures
     print(
         f"Validation_loss = {average_val_loss:.4f}, "
+        f"f1 = {f1:.4f}, "
         f"Validation_precision = {precision:.4f}, "
         f"Validation_recall = {recall:.4f}"
     )
 
-    return average_val_loss, precision, recall
+    return average_val_loss, precision, recall, f1
 
 #put all code in a main function, so that it can be called when the script is run directly 
 #but not when it is imported as a module
@@ -231,12 +375,22 @@ def main():
     root_directory = Path(__file__).parent.parent
 
     #EPOCHS is the number of times the model will see the entire dataset during training
-    EPOCHS = 30
+    EPOCHS = 100
+
+    #knowledge distillation bool
+    know_diss = False
+
+    #set best model parameters
+    best_f1 = float(0)
 
     #initialses lists to store training data for plotting later
-    csv_directory = root_directory / "training" / "history"
+    if know_diss:
+        csv_directory = root_directory / "training" / "history_kd"
+    else:
+        csv_directory = root_directory / "training" / "history"
     history_train_loss = []
     history_val_loss = []
+    history_f1 = []
     history_precision = []
     history_recall = []
 
@@ -262,9 +416,9 @@ def main():
     #shuffles the data for each epoch, so model does not learn the order of the data, which would reduce generalisation
     train_loader = DataLoader(
         train_dataset,
-        batch_size=128,
+        batch_size=32,
         shuffle=True,
-        num_workers=12, #load data in parallel using 4 worker threads, recommended at 4 * no. GPU's
+        num_workers=4, #load data in parallel using 4 worker threads, recommended at 4 * no. GPU's
         
         ##allows data to be transferred to GPU through page-locked memory, which is faster than normal memory
         #CPU and GPU can access page-locked memory simultaneously, so data can be transferred to GPU while CPU is loading the next batch of data
@@ -284,9 +438,9 @@ def main():
 
     val_loader = DataLoader(
         val_dataset,
-        batch_size=128,
+        batch_size=32,
         shuffle=False,
-        num_workers=8,
+        num_workers=4,
         pin_memory=True,
         #keeps workers running over each epoch
         persistent_workers=True
@@ -294,13 +448,17 @@ def main():
 
     #puts model onto device
     student_model = StudentFaceDetector().to(DEVICE)
-    teacher_model = TeacherFaceDetector().to(DEVICE)
+
+    if know_diss:
+        teacher_model = TeacherFaceDetector().to(DEVICE)
+    else:
+        teacher_model = None
 
 
     #creates an AdamW optimiser for the model parameters
     #weight decay is a regularisation technique that reduces overfitting by penalising large weights
     #this prevents the model from memorising the training data, and encourages it to learn generalisable features
-    optimizer = torch.optim.AdamW(student_model.parameters(), lr=0.001, weight_decay=1e-5)
+    optimizer = torch.optim.AdamW(student_model.parameters(), lr=1e-4, weight_decay=1e-3)
 
     #creates a cosine annealing learning rate scheduler 
     #reduces the learning rate over time to help the model converge to a minimum
@@ -317,18 +475,15 @@ def main():
     student_checkpoint_file = "student_checkpoint.pt"
     teacher_checkpoint_file = "teacher_checkpoint.pt"
 
-    start_epoch = LoadCheckpoint(
+    start_epoch, best_f1 = LoadCheckpoint(
         student_model, 
         teacher_model, 
         optimizer, 
+        scheduler,
         filename=root_directory, 
         student=student_checkpoint_file, 
         teacher= teacher_checkpoint_file
         )
-
-
-    #set best model parameters
-    best_val_loss = float("inf")
 
 
     #---------- Main loop ----------
@@ -344,17 +499,13 @@ def main():
         #for example, nn.BatchNorm2d uses the mean and variance of the current batch during training, but uses the running mean and variance during evaluation
         student_model.train()
 
-        
-        #update learning rate after each epoch, to help the model converge to a minimum
-        scheduler.step(epoch)
-
         #set running loss and accuracy to 0 for each epoch, to calculate average at the end of the epoch
         running_loss = 0.0
 
         #initialize batch counter, to monitor training progress
         current_batch = 0
 
-        for images, targets in train_loader:
+        for images, small_targets, medium_targets, large_targets in train_loader:
 
             #move data to device for efficiency, and to ensure model and tensors are on the same device
             #non_blocking=True allows data transfer to be asynchronous, so CPU can continue loading data while GPU is training the model
@@ -363,22 +514,43 @@ def main():
                 non_blocking=True
             )
 
-            targets = targets.to(
+            small_targets = small_targets.to(
                 DEVICE,
                 non_blocking=True
             )
+
+            medium_targets = medium_targets.to(
+                DEVICE,
+                non_blocking=True
+            )
+
+            large_targets = large_targets.to(
+                DEVICE,
+                non_blocking=True
+            )
+
+            #concatrate targets 
+            targets = torch.cat([small_targets, medium_targets, large_targets], dim=1)
 
             #clear gradients from previous iteration, otherwise they will accumulate and cause incorrect updates to the model parameters
             optimizer.zero_grad(set_to_none=True)
 
             #forward pass through the model, which returns predictions for the input images
-            predictions = student_model(images)
+            small_faces, medium_faces, large_faces = student_model(images)
+
+            teacher_predictions=None
 
             #forward pass over teacher, to use its predictions in knowledge distillation
-            teacher_predicitions = teacher_model(images)
+            if know_diss:
+                with torch.no_grad():
+                    t_small_faces, t_medium_faces, t_large_faces = teacher_model(images)
+                    teacher_predictions = torch.cat([t_small_faces, t_medium_faces, t_large_faces], dim=1)
+                
+
+            raw_predictions = torch.cat([small_faces, medium_faces, large_faces], dim=1)
 
             #calculate loss between predictions and targets
-            loss = detection_loss(predictions, targets, teacher_predicion=teacher_predicitions)
+            loss = detection_loss(raw_predictions, targets, teacher_prediction=teacher_predictions)
 
             #backward pass through model to calculate gradients of the loss with respect to the model parameters
             #if a weight causes a large loss, its gradient will be large
@@ -405,29 +577,35 @@ def main():
             f"training_loss = {average_loss:.4f}, "
         )
 
+        #update learning rate after each epoch, to help the model converge to a minimum
+        scheduler.step()
+
         #use moduli function to validate after a certain number of epochs
         if (epoch + 1) % 1 == 0:
             print("Validating...")
 
             #validate, and return validation loss
-            val_loss, precision, recall = Validation(student_model, val_loader=val_loader, device=DEVICE)
+            val_loss, precision, recall, f1 = Validation(student_model, val_loader=val_loader, device=DEVICE)
 
             #append values to history lists
             history_val_loss.append(val_loss)
             history_precision.append(precision)
             history_recall.append(recall)
+            history_f1.append(f1)
 
             #check for best valuation loss and save model if its good
-            if val_loss < best_val_loss:
+            if f1 > best_f1:
 
-                best_val_loss = val_loss
+                best_f1 = f1
 
                 #saves the model state dictionary and training parameters after a succesful validation, 
                 #so training can be resumed later if interrupted 
                 checkpoint = {      
                             'epoch': epoch + 1,
                             'model_state_dict': student_model.state_dict(),
-                            'optimizer_state_dict': optimizer.state_dict(),   
+                            'optimizer_state_dict': optimizer.state_dict(),
+                            'scheduler_state_dict': scheduler.state_dict(), 
+                            'best_f1': best_f1 
                             }
 
                 #we use .pt instead of .pth to prevent confusion with pythons path files
@@ -456,13 +634,19 @@ def main():
     plt.figure(1)
     plt.plot(history_train_loss, 'o-')
     plt.title("Training Loss")
-    plt.savefig(csv_directory / "training/train_loss.jpg")
+    plt.savefig(csv_directory / "train/train_loss.jpg")
     plt.show()
 
     plt.figure(2)
     plt.plot(history_val_loss, 'g-')
     plt.title("Validation Loss")
     plt.savefig(csv_directory / "val/val_loss.jpg")
+    plt.show()
+
+    plt.figure(2)
+    plt.plot(history_f1, 'p-')
+    plt.title("F1")
+    plt.savefig(csv_directory / "val/f1.jpg")
     plt.show()
 
     plt.figure(3)
@@ -479,8 +663,9 @@ def main():
     
 
     #save history lists as csv files
-    np.savetxt(csv_directory / "training/train_loss.csv", history_train_loss, delimiter=",")
+    np.savetxt(csv_directory / "train/train_loss.csv", history_train_loss, delimiter=",")
     np.savetxt(csv_directory / "val/val_loss.csv", history_val_loss, delimiter=",")
+    np.savetxt(csv_directory / "val/f1.csv", history_f1, delimiter=",")
     np.savetxt(csv_directory / "val/precision.csv", history_precision, delimiter=",")
     np.savetxt(csv_directory / "val/recall.csv", history_recall, delimiter=",")
 

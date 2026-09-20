@@ -3,7 +3,7 @@ import torch
 import numpy as np
 import torchvision.transforms as tf
 from pathlib import Path
-from Student_CNN.student_model.student import FaceDetector
+from Student_CNN.student_model.student import StudentFaceDetector
 from Student_CNN.teacher_model.teacher import TeacherFaceDetector
 from torchvision.ops import nms
 
@@ -50,20 +50,40 @@ def letterbox_image(image, target_size=224):
 
 #---------- Load model from file ----------
 
-def load_model(model_path):
+def load_model(model_path, student=False):
 
     #takes model path input and loads the pytorch checkpoint
-    weights = torch.load(model_path)
-    model = TeacherFaceDetector()
+    if student:
+        print("Using Model: Student")
+        model = StudentFaceDetector()
+        weights = torch.load(model_path / "student_checkpoint.pt")
+    else:
+        print("Using Model: Teacher")
+        model = TeacherFaceDetector()
+        weights = torch.load(model_path / "teacher_checkpoint.pt")
+
     model.load_state_dict(weights["model_state_dict"])
     model.eval()
     return model
 
+#--------- Apply nms ----------
+
+def apply_nms(boxes, scores, iou_threshold=0.1):
+
+    if boxes.numel() == 0:
+        return boxes, scores
+
+    keep = nms(
+        boxes,
+        scores,
+        iou_threshold
+    )
+
+    return boxes[keep], scores[keep]
+
 #---------- Decode model outputs into bounding box coordinates ----------
 
-def decode_predictions(prediction, confidence_threshold=0.8, image_size=224, iou_threshold=0.3):
-
-    #sanity checks for different inputs:
+def decode_predictions(prediction, grid_size, confidence_threshold=0.8):
 
     #check if single image, and store in a variable
     single_image = prediction.dim() == 2
@@ -75,9 +95,26 @@ def decode_predictions(prediction, confidence_threshold=0.8, image_size=224, iou
     #if neither single or batched image, raise an error
     elif prediction.dim() != 3:
         raise ValueError(
-            f"Expected [N,5] or [B,N,5], "
+            f"Expected [N ,5] or [B,N,5], "
             f"got {prediction.shape}"
         )
+
+        #sanity checks for different inputs:
+    B, N, C = prediction.shape
+
+    expected_cells = grid_size * grid_size
+
+    assert N == expected_cells, (
+        f"Expected {expected_cells} cells for "
+        f"{grid_size}x{grid_size} head, got {N}"
+    )
+
+    assert C == 5, (
+        f"Expected 5 prediction values, got {C}"
+    )
+
+    #reshape flattened head back to grid
+    prediction = prediction.reshape(B, grid_size, grid_size, 5)
 
     #store the device the predictions are on
     device = prediction.device
@@ -86,12 +123,26 @@ def decode_predictions(prediction, confidence_threshold=0.8, image_size=224, iou
     confidence = torch.sigmoid(prediction[..., 0])
 
     #decode offset probability into relative offset
-    cx = torch.sigmoid(prediction[..., 1]) * image_size
-    cy = torch.sigmoid(prediction[..., 2]) * image_size
+    tx = torch.sigmoid(prediction[..., 1]) 
+    ty = torch.sigmoid(prediction[..., 2]) 
 
     #decode width/height probability into values relative to image
-    width = torch.sigmoid(prediction[..., 3]) * image_size
-    height = torch.sigmoid(prediction[..., 4]) * image_size
+    width = torch.sigmoid(prediction[..., 3]) 
+    height = torch.sigmoid(prediction[..., 4]) 
+
+    grid_y, grid_x = torch.meshgrid(
+            torch.arange(grid_size, device=device),
+            torch.arange(grid_size, device=device),
+            indexing="ij"
+    )
+    
+    grid_x = grid_x.float()
+    grid_y = grid_y.float()
+    
+    # convert cell-relative coordinates
+    # into image-relative coordinates
+    cx = (grid_x + tx) / grid_size
+    cy = (grid_y + ty) / grid_size
 
     x1 = cx - width / 2
     y1 = cy - height / 2
@@ -136,17 +187,9 @@ def decode_predictions(prediction, confidence_threshold=0.8, image_size=224, iou
 
             continue
 
-        #if images overlap more than the iou_threshold, they are not included
-        keep_nms = nms(
-            boxes_b,
-            scores_b,
-            iou_threshold
-        )
-
-        #only keep images that do not overlap
-        #boxes don't represent same face
-        batch_boxes.append(boxes_b[keep_nms])
-        batch_scores.append(scores_b[keep_nms])
+        #append boxes to batch
+        batch_boxes.append(boxes_b)
+        batch_scores.append(scores_b)
 
     #output only one image if single image input
     if single_image:
@@ -158,12 +201,12 @@ def decode_predictions(prediction, confidence_threshold=0.8, image_size=224, iou
 def main():
 
     #image size
-    image_size = 128
+    image_size = 224
 
     #find package root
     package_root = Path(__file__).parent.parent
 
-    model = load_model(package_root / "teacher_checkpoint.pt")
+    model = load_model(package_root, True)
 
     #checks if CUDA-compatible GPU is available for efficiency, otherwise uses CPU
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -190,7 +233,7 @@ def main():
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         #letterbox image, so the model can process it accurately
-        rgb, scale, pad_x, pad_y, original_height, original_width = letterbox_image(rgb, 128)
+        rgb, scale, pad_x, pad_y, original_height, original_width = letterbox_image(rgb, image_size)
 
         #convert image to tensor
         tensorImg = tf.ToTensor()(rgb)    
@@ -208,17 +251,33 @@ def main():
         #run model, making sure we don't compute gradients for efficiency
         with torch.no_grad():
 
-            output = model(test_image_tensor)
+            small_faces, medium_faces, large_faces = model(test_image_tensor)
+
 
         #moves prediction back to CPU
-        output = output[0].cpu()
+        small_faces = small_faces[0].cpu()
+        medium_faces = medium_faces[0].cpu()
+        large_faces = large_faces[0].cpu()
+
+        small_faces, small_scores = decode_predictions(small_faces, image_size // 8)
+        medium_faces, medium_scores = decode_predictions(medium_faces, image_size // 16)
+        large_faces, large_scores = decode_predictions(large_faces, image_size // 32)
+        boxes = torch.cat([small_faces, medium_faces, large_faces], dim=0)
+        scores = torch.cat([small_scores, medium_scores, large_scores], dim=0)
+
+        #apply nms to boxes
+        boxes, scores = apply_nms(boxes, scores)
 
         #draws detections
-        boxes, scores = decode_predictions(output)
-
         for box, score in zip(boxes, scores):
-
+            
             x1, y1, x2, y2 = box.tolist()
+
+            #convert coordinates to pixels
+            x1 *= image_size
+            x2 *= image_size
+            y1 *= image_size
+            y2 *= image_size
 
             #transforms coordinates back into scale of original image
             x1 = (x1 - pad_x) / scale

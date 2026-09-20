@@ -8,7 +8,7 @@ import torchvision.transforms.functional as tff
 
 #---------- Filters out faces in WIDER_FACE which are too difficult for the basic model ----------
 
-def filter_annotations(boxes, scale_x, scale_y, min_size=8, max_blur=3, max_occlusion=4, max_pose=3):
+def filter_annotations(boxes, scale_x, scale_y, min_size =8, max_blur=3, max_occlusion=4, max_pose=3):
 
         #stores good boxes
         good_boxes = []
@@ -90,10 +90,9 @@ class FaceAsTensorDataset(Dataset):
         try:
             with open(label_path) as f:
                 boxes = json.load(f)
-        except:
-
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            
             boxes = []
-            pass
 
 
         #store original image dimensions
@@ -226,11 +225,16 @@ class FaceAsTensorDataset(Dataset):
                 grid_x = min(int(cell_x), grid_size - 1)
                 grid_y = min(int(cell_y), grid_size - 1)
 
+                #we use relative coordinates, because these values make regression easier
+                #the model is able to learn more effectively
+                x_offset = cell_x - grid_x
+                y_offset = cell_y - grid_y
+
                 #assign target
                 if target[grid_y, grid_x, 0] == 0:
                     target[grid_y, grid_x, 0] = 1.0
-                    target[grid_y, grid_x, 1] = cx_norm
-                    target[grid_y, grid_x, 2] = cy_norm   
+                    target[grid_y, grid_x, 1] = x_offset
+                    target[grid_y, grid_x, 2] = y_offset  
                     target[grid_y, grid_x, 3] = w_norm
                     target[grid_y, grid_x, 4] = h_norm
 
@@ -239,6 +243,4 @@ class FaceAsTensorDataset(Dataset):
         medium_target = medium_target.reshape(-1, 5)
         large_target = large_target.reshape(-1, 5)
 
-        #concatenates predictions into a list of small-grid followed by medium-grid then large-grid 
-        target = torch.cat([small_target, medium_target, large_target], dim=0)
-        return image, target
+        return image, small_target, medium_target, large_target

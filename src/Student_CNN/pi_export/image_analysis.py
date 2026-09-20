@@ -1,108 +1,121 @@
 from pathlib import Path
 import torch 
-import torchvision.transforms.functional as tff
-from PIL import Image, ImageDraw
-from Student_CNN.teacher_model.teacher import TeacherFaceDetector
-from Student_CNN.pi_export.output_video import decode_predictions
-
-def load_model(model_path, DEVICE=torch.device('cpu')):
-    #load model from file
-
-    weights = torch.load(model_path)
-    model = TeacherFaceDetector()
-    model.load_state_dict(weights["model_state_dict"])
-    model.eval()
-    return model
-
+import cv2
+import torchvision.transforms as tf
+from Student_CNN.pi_export.output_video import decode_predictions, letterbox_image, apply_nms, load_model
 
 def main():
 
     #checks if CUDA-compatible GPU is available for efficiency, otherwise uses CPU
-    DEVICE = (
+    device = (
         "cuda"
         if torch.cuda.is_available()
         else "cpu"
     )
 
-    print(f"Using Device: {DEVICE}")
+    print(f"Using Device: {device}")
+
+    #image size
+    image_size = 224
 
     #find package root
     package_root = Path(__file__).parent.parent
 
-    model = load_model(package_root / "teacher_checkpoint.pt", DEVICE=DEVICE)
+    model = load_model(package_root, student=True)
+    model.to(device)
 
-    try:
-        #opens image and converts to 3-channel RGB
-        test_image = Image.open(package_root / "test_images" / "overfit1.jpg").convert("RGB")
-    except:
-        print("Image not found")
+    #opens image
+    image_file = package_root / "test_images" / "soldier1.jpg"
+    test_image = cv2.imread(image_file, cv2.IMREAD_COLOR)
+
+    if test_image is None:
+        raise FileNotFoundError("Image not found")
+
+    #OpenCV gives BGR; convert to RGB
+    rgb = cv2.cvtColor(test_image, cv2.COLOR_BGR2RGB)
         
-
     #stores output location
-    output_file = package_root / "test_images" / "overfit1_output.png"
+    output_file = package_root / "test_images" / "output_soldier1.png"
 
-    #store original image dimensions
-    original_size = test_image.size
+    #copy original image
+    original_frame = test_image.copy()
 
-    #set variable for model image size
-    model_size = 128
-
-    #resize image to 128x128 while maintaining aspect ratio, and pad with black if necessary
-    #prevents distorted faces
-    image = test_image.copy()
-    image.thumbnail((model_size, model_size))
-
-    #create a 128x128 RGB canvas
-    canvas = Image.new("RGB", (model_size, model_size), (0, 0, 0))  #black padding
-
-    #center the image
-    x = (model_size - image.width) // 2
-    y = (model_size - image.height) // 2
-
-    canvas.paste(image, (x, y))
+    #letterbox image, so the model can process it accurately
+    rgb, scale, pad_x, pad_y, original_height, original_width = letterbox_image(rgb, image_size)
 
     #convert image to tensor
-    image = tff.to_tensor(canvas)
+    tensorImg = tf.ToTensor()(rgb)    
 
     #for reliable results, we copy training normalization values from the FaceAsTensorDataset class in dataset.py
-    tff.normalize(image, mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+    normalize = tf.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+
+    tensorImg = normalize(tensorImg)
 
     #add a batch dimension, since the model expects this as input
-    test_image_tensor = image.unsqueeze(0)
+    test_image_tensor = tensorImg.unsqueeze(0)
 
-    #run model on image
+    test_image_tensor = test_image_tensor.to(device)
+
+    #run model, making sure we don't compute gradients for efficiency
     with torch.no_grad():
 
-        #returns with boxes and scores from image
-        boxes, scores = decode_predictions(model(test_image_tensor))
+        small_faces, medium_faces, large_faces = model(test_image_tensor)
 
-    #creates a drawing object in pillow which can be used to draw 
-    draw = ImageDraw.Draw(test_image)
 
-    #calculates scale for images
-    scale_x = original_size[0] / model_size
-    scale_y = original_size[1] / model_size
+    #moves prediction back to CPU
+    small_faces = small_faces[0].cpu()
+    medium_faces = medium_faces[0].cpu()
+    large_faces = large_faces[0].cpu()
 
-    for box, score in zip(boxes[0], scores[0]):
+    small_faces, small_scores = decode_predictions(small_faces, image_size // 8)
+    medium_faces, medium_scores = decode_predictions(medium_faces, image_size // 16)
+    large_faces, large_scores = decode_predictions(large_faces, image_size // 32)
+    boxes = torch.cat([small_faces, medium_faces, large_faces], dim=0)
+    scores = torch.cat([small_scores, medium_scores, large_scores], dim=0)
+
+    #apply nms to boxes
+    boxes, scores = apply_nms(boxes, scores)
+
+    #draws detections
+    for box, score in zip(boxes, scores):
         
-        #extracts the corners from the box list
         x1, y1, x2, y2 = box.tolist()
 
-        #scales thumbnail coordinates to original image coordinates
-        x1 *= scale_x
-        x2 *= scale_x
-        y1 *= scale_y
-        y2 *= scale_y
+        #convert coordinates to pixels
+        x1 *= image_size
+        x2 *= image_size
+        y1 *= image_size
+        y2 *= image_size
 
-        #draws bounding box
-        draw.rectangle([x1, y1, x2, y2], outline="red",width=3)
+        #transforms coordinates back into scale of original image
+        x1 = (x1 - pad_x) / scale
+        x2 = (x2 - pad_x) / scale
+        y1 = (y1 - pad_y) / scale
+        y2 = (y2 - pad_y) / scale
 
-        #writes confidence score on a red background
-        draw.text((x1, max(0, y1 - 15)), f"{score.item():.2f}", fill="red")
+        #clamps to original image
+        x1 = max(0, min(original_width - 1, x1))
+        x2 = max(0, min(original_width - 1, x2))
+        y1 = max(0, min(original_height - 1, y1))
+        y2 = max(0, min(original_height - 1, y2))
+
+        #converts coordinates to integer pixel values, which are required for openCV functions
+        x1, y1, x2, y2 = map(int, (x1, y1, x2, y2))
+
+        #openCV function to draw a rectangular bounding box
+        cv2.rectangle(original_frame, (x1, y1), (x2, y2), color=(0,0,255))
+
+        #font for confidence score label
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        label = f"Face: {score.item():.2f}"
+
+        #draws confidence score label on corner of bounding box
+        cv2.putText(original_frame, label, (x1, y1), font, 0.5,(255,255,255),1,cv2.LINE_AA)
+
 
     #saves image
     print(f"Saving image to .... {output_file}")
-    test_image.save(output_file)
+    cv2.imwrite(output_file, original_frame)
 
 
 if __name__ == "__main__":

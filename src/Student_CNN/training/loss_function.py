@@ -6,11 +6,11 @@ import torch.nn.functional as func
 
 def detection_loss(prediction, 
                    target, 
-                   teacher_predicion=None, 
+                   teacher_prediction=None, 
                    lambda_box=2.0, 
-                   lambda_noobj=0.5, 
-                   lambda_wh = 1.5, 
-                   lambda_kd=1, 
+                   lambda_noobj=2, 
+                   lambda_wh = 1, 
+                   lambda_kd=0.1, 
                    temperature=5 
                    ):
 
@@ -20,14 +20,6 @@ def detection_loss(prediction,
     pred_box = prediction[ ... , 1:]
     target_obj = target[ ... , 0]
     target_box = target[ ... , 1:]
-
-    if teacher_predicion != None:
-        teacher_predicion = teacher_predicion.detach() #use this so loss doesn't backpropogate through teacher model
-        teach_obj = teacher_predicion[ ... , 0]
-        teach_box = teacher_predicion[ ... , 1:]
-
-
-
 
     #efficient why of calculating whether there is a face in the cell or not, by checking if the objectness score is 1 or 0
     #positive variable returns True of target_obj is 1 eg.
@@ -99,7 +91,12 @@ def detection_loss(prediction,
 
     knowdiss_loss = torch.tensor(0.0, device=prediction.device)
 
-    if teacher_predicion != None:
+    if teacher_prediction != None:
+
+        #separate bounding box and cofidence score
+        teach_obj = teacher_prediction[ ... , 0]
+        teach_box = teacher_prediction[ ... , 1:]
+
 
         #calculate soft targets, weighted by a temperature parameter
         student_soft_obj = torch.sigmoid(pred_obj / temperature)
@@ -107,10 +104,11 @@ def detection_loss(prediction,
         #calculate soft targets, weighted by a temperature parameter
         teacher_soft_obj = torch.sigmoid(teach_obj / temperature)
 
-        obj_knowdiss_loss = func.binary_cross_entropy_with_logits(
+        #apply cross entropy to probabilities, weighted by temperature squared
+        obj_knowdiss_loss = func.binary_cross_entropy(
             student_soft_obj,
             teacher_soft_obj
-        )
+        ) * temperature ** 2
 
         if positive.any():
 
@@ -143,7 +141,7 @@ def detection_loss(prediction,
         knowdiss_loss = obj_knowdiss_loss + lambda_box * box_knowdiss_loss
 
     #bounding box loss is weighted by lambda_box, as this is the most important part of the loss function, as it is the most difficult to learn
-    total = obj_loss + lambda_box * box_loss + lambda_kd * knowdiss_loss
+    total = (1 - lambda_kd) * (obj_loss + lambda_box * box_loss) + lambda_kd * knowdiss_loss
         
 
     return total 

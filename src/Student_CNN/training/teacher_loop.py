@@ -22,15 +22,17 @@ def LoadCheckpoint(model, optimizer, scheduler, filename):
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         start_epoch = checkpoint['epoch']
+        #best_val_loss = checkpoint['best_val_loss']
+        best_val_loss = float('inf')
 
         #print start epoch and checkpoint filename, to confirm that the checkpoint was loaded correctly
         print(f"Loaded checkpoint '{filename}' (epoch {start_epoch})")
 
-        return start_epoch
+        return start_epoch, best_val_loss
 
     else:
         print(f"No checkpoint found at '{filename}'")
-        return 0
+        return 0, float("inf")
 
 #---------- Validation loop ----------
 
@@ -48,9 +50,9 @@ def Validation(model, val_loader, device="cpu"):
 
     #disables gradient calculation during validation
     #this saves GPU memory and computation
-    with torch.no_grad():
+    with torch.inference_mode():
 
-        for images, targets in val_loader:
+        for images, small_targets, medium_targets, large_targets in val_loader:
 
             #move validation data to device used for training
             images = images.to(
@@ -58,13 +60,28 @@ def Validation(model, val_loader, device="cpu"):
                 non_blocking=True
             )
 
-            targets = targets.to(
+            small_targets = small_targets.to(
                 device,
                 non_blocking=True
             )
 
+            medium_targets = medium_targets.to(
+                device,
+                non_blocking=True
+            )
+
+            large_targets = large_targets.to(
+                device,
+                non_blocking=True
+            )
+
+            #concatrate targets 
+            targets = torch.cat([small_targets, medium_targets, large_targets], dim=1)
+
             #forward pass only through the model
-            predictions = model(images)
+            small_faces, medium_faces, large_faces = model(images)
+
+            predictions = torch.cat([small_faces, medium_faces, large_faces], dim=1)
 
             #calculate validation loss
             loss = detection_loss(
@@ -129,7 +146,10 @@ def main():
     root_directory = Path(__file__).parent.parent
 
     #EPOCHS is the number of times the model will see the entire dataset during training
-    EPOCHS = 30
+    EPOCHS = 100
+
+    #initialise val_loss
+    best_val_loss = float('inf')
 
     #checks if CUDA-compatible GPU is available for efficiency, otherwise uses CPU
     DEVICE = (
@@ -149,13 +169,13 @@ def main():
         input_size=224,
     )
 
-    #creates a data loader for the dataset, loading 64 images at a time
+    #creates a data loader for the dataset, loading multiple images at a time
     #shuffles the data for each epoch, so model does not learn the order of the data, which would reduce generalisation
     train_loader = DataLoader(
         train_dataset,
-        batch_size=128,
+        batch_size=32,
         shuffle=True,
-        num_workers=12, #load data in parallel using 4 worker threads, recommended at 4 * no. GPU's
+        num_workers=4, #load data in parallel using worker threads, recommended at 4 * no. GPU's
         
         ##allows data to be transferred to GPU through page-locked memory, which is faster than normal memory
         #CPU and GPU can access page-locked memory simultaneously, so data can be transferred to GPU while CPU is loading the next batch of data
@@ -175,21 +195,22 @@ def main():
 
     val_loader = DataLoader(
         val_dataset,
-        batch_size=128,
+        batch_size=32,
         shuffle=False,
-        num_workers=8,
+        num_workers=4,
         pin_memory=True,
         #keeps workers running over each epoch
-        persistent_workers=True
+        persistent_workers=False
     )
 
     #puts model onto device
     model = TeacherFaceDetector().to(DEVICE)
+    print("Model device:", next(model.parameters()).device)
 
     #creates an AdamW optimiser for the model parameters
     #weight decay is a regularisation technique that reduces overfitting by penalising large weights
     #this prevents the model from memorising the training data, and encourages it to learn generalisable features
-    optimizer = torch.optim.AdamW(model.parameters(), lr=0.0001, weight_decay=1e-2)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-2)
 
     #creates a cosine annealing learning rate scheduler 
     #reduces the learning rate over time to help the model converge to a minimum
@@ -205,11 +226,7 @@ def main():
     #load checkpoint file
     checkpoint_file = "teacher_checkpoint.pt"
 
-    start_epoch = LoadCheckpoint(model, optimizer, scheduler, filename=root_directory / checkpoint_file)
-
-
-    #set best model parameters
-    best_val_loss = float("inf")
+    start_epoch, best_val_loss = LoadCheckpoint(model, optimizer, scheduler, filename=root_directory / checkpoint_file)
 
 
     #---------- Main loop ----------
@@ -231,7 +248,7 @@ def main():
         #initialize batch counter, to monitor training progress
         current_batch = 0
 
-        for images, targets in train_loader:
+        for images, small_targets, medium_targets, large_targets in train_loader:
 
             #move data to device for efficiency, and to ensure model and tensors are on the same device
             #non_blocking=True allows data transfer to be asynchronous, so CPU can continue loading data while GPU is training the model
@@ -240,16 +257,31 @@ def main():
                 non_blocking=True
             )
 
-            targets = targets.to(
+            small_targets = small_targets.to(
                 DEVICE,
                 non_blocking=True
             )
+
+            medium_targets = medium_targets.to(
+                DEVICE,
+                non_blocking=True
+            )
+
+            large_targets = large_targets.to(
+                DEVICE,
+                non_blocking=True
+            )
+
+            #concatrate targets 
+            targets = torch.cat([small_targets, medium_targets, large_targets], dim=1)
 
             #clear gradients from previous iteration, otherwise they will accumulate and cause incorrect updates to the model parameters
             optimizer.zero_grad(set_to_none=True)
 
             #forward pass through the model, which returns predictions for the input images
-            predictions = model(images)
+            small_faces, medium_faces, large_faces = model(images)
+
+            predictions = torch.cat([small_faces, medium_faces, large_faces], dim=1)
 
             #calculate loss between predictions and targets
             loss = detection_loss(predictions, targets)
@@ -261,8 +293,6 @@ def main():
             #loss.backward() calculates how much weights should be changed, and optimizer.step() updates the weights
             optimizer.step()
 
-            #update learning rate after each epoch, to help the model converge to a minimum
-            scheduler.step()
 
             #accumulate loss for the epoch, to calculate average loss at the end of the epoch
             running_loss += loss.item()
@@ -278,6 +308,9 @@ def main():
             #format is "metric_name = metric_value", with 4 decimal places for loss, precision, and recall
             f"training_loss = {average_loss:.4f}, "
         )
+
+        #update learning rate after each epoch, to help the model converge to a minimum
+        scheduler.step()
 
         #use moduli function to validate after a certain number of epochs
         if (epoch + 1) % 1 == 0:
@@ -297,7 +330,8 @@ def main():
                             'epoch': epoch + 1,
                             'model_state_dict': model.state_dict(),
                             'optimizer_state_dict': optimizer.state_dict(),  
-                            'scheduler_state_dict': scheduler.state_dict() 
+                            'scheduler_state_dict': scheduler.state_dict(), 
+                            'best_val_loss': best_val_loss
                             }
 
                 #we use .pt instead of .pth to prevent confusion with pythons path files

@@ -193,7 +193,7 @@ class TeacherFaceDetector(nn.Module):
         large_faces = large_faces.reshape(x.size(0), -1, 5)
 
         #concatenates predictions into a list of small-grid followed by medium-grid then large-grid 
-        return torch.cat([small_faces, medium_faces, large_faces], dim=1)
+        return small_faces, medium_faces, large_faces
 
 
 if __name__ == '__main__':
