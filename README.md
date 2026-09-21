@@ -4,10 +4,10 @@
 Knowledge distillation for efficient computer vision in the context of facial recognition and location — 
 transferring the performance of a large teacher model into a smaller, faster student model better suited for operation on edge devices.
 
-<p align="center"> <img src="src/Student_CNN/teacher_model/teacher_architecture.png" alt="Teacher Architecture" width="450"> <img src="src/Student_CNN/student_model/student_architecture.png" alt="Student Architecture" width="450"> 
-</p> <p align="center"> <a href="#quick-start">Quick Start</a> • <a href="#training-results">Training Results</a> • <a href="#example-photos">Example Photos</a>
+<p align="center"> <img src="src/Student_CNN/teacher_model/teacher_architecture.png" alt="Teacher Architecture" width="350"> <img src="src/Student_CNN/student_model/student_architecture.png" alt="Student Architecture" width="350"> 
+</p> <p align="center"> <a href="#get-started">Get Started</a> • <a href="#training-results">Training Results</a> • <a href="#example-photos">Example Photos</a> • <a href="#acknowledgements">Acknowledgements</a>
 
-## Quick Start
+## Get Started
 ### Requirements
 For package requirements, see requirements.txt
 
@@ -28,8 +28,17 @@ Annotations:
 > Use annotations.py to convert csv annotations to json-style format used by the dataset code.
 
 ### Open in visual studio code
-Create a virtual environment, then run pip install -r requirements.txt.
-Finally, run python -m pip install Student_CNN, then on the debugging tab you can select which code to run.
+1. Download the code as a zip file.
+2. Click open folder, and select the root folder to this code. 
+3. Create a virtual environment, then install requirements using 
+```
+pip install -r requirements.txt
+```
+4. Finally, install the package using 
+```
+python -m pip install Student_CNN
+```
+On the debugging tab you can select which code to run.
 The default options are:
 - Teacher Parameters
 - Student Parameters
@@ -37,6 +46,23 @@ The default options are:
 - Analyze Camera
 - Analyze Image
 - Train Student
+
+### Open in python
+1. Install the package as before in the root folder.
+2. Create and activate a virtual environment using
+```
+python3 -m venv myenv
+```
+followed by
+```
+source myenv/bin/activate
+```
+3. Install requirements as before.
+4. To execute the package, add a __main__.py file and specify the package entry point.
+5. Then run,
+```
+python -m Student_CNN
+```
 
 ## Training Results
 > [!NOTE]
@@ -57,6 +83,7 @@ The default options are:
 | --- | --- | --- |
 | **Loss** | `lambda_box` = 2 <br> `lambda_noobj` = 2 <br> `lambda_wh` = 1 <br> |
 | **Validation** | `confidence_threshold` = 0.8 <br> `nms_threshold` = 0.1 <br> `iou_threshold` = 0.3 |
+| **Training**| `AdamW optimizer lr` = 1e-4 <br> `AdamW weight decay` = 1e-3 <br> `Scheduler` = CosineAnnealing (eta_min: 1e-6) |
 | **Comments**| High confidence threshold gave balance between precision/recall for max f1. <br> More training information in log.txt |
 
 ## Example Photos
@@ -69,17 +96,22 @@ The default options are:
 ### Obscured Face
 | Obscured Face | Output without KD | Output with KD |
 | --- | --- | --- |
-| <p align="center"> <img src="src/Student_CNN/test_images/soldier2.jpg" alt="Obscured Face" width="200"> |<p align="center"> <img src="model_no_kd/test_images_output/output_soldier2.png" alt="Obscured Face no_kd" width="400"> |
+| <p align="center"> <img src="src/Student_CNN/test_images/soldier2.jpg" alt="Obscured Face" width="200"> |<p align="center"> <img src="model_no_kd/test_images_output/output_soldier2.png" alt="Obscured Face no_kd" width="300"> |
 | **Comments** | Model can still identify faces with a large confidence, but is less clear on the location of the bounding box|
 
 ### Grouped Faces
 | Grouped Faces | Output without KD | Output with KD |
 | --- | --- | --- |
-| <p align="center"> <img src="src/Student_CNN/test_images/group.jpg" alt="Grouped Faces" width="200"> |<p align="center"> <img src="model_no_kd/test_images_output/output_group.png" alt="Grouped Faces no_kd" width="400"> |
+| <p align="center"> <img src="src/Student_CNN/test_images/group.jpg" alt="Grouped Faces" width="200"> |<p align="center"> <img src="model_no_kd/test_images_output/output_group.png" alt="Grouped Faces no_kd" width="300"> |
 | **Comments** | Difficult photo, and the model successfully identifies and localizes 18/22 faces.<br> There are a couple of high confidence false positives close to certain faces.|
 
 ### Animal Faces
 | Grouped Faces | Output without KD | Output with KD |
 | --- | --- | --- |
-| <p align="center"> <img src="src/Student_CNN/test_images/handshake.jpg" alt="Animal Faces" width="200"> |<p align="center"> <img src="model_no_kd/test_images_output/output_handshake.png" alt="Animal Faces no_kd" width="400"> |
+| <p align="center"> <img src="src/Student_CNN/test_images/handshake.jpg" alt="Animal Faces" width="200"> |<p align="center"> <img src="model_no_kd/test_images_output/output_handshake.png" alt="Animal Faces no_kd" width="300"> |
 | **Comments** | Tested this photo as a joke, however it seems the model can identify dog faces too!|
+
+## Acknowledgements
+I based the model architecture of the following code: [MobileNetV2](https://github.com/jmjeon2/MobileNet-Pytorch/blob/20972586be740d5bc1e92bfb23928359be30e731/MobileNetV2.py) <br>
+The feature pyramid network addition to MobileNetV2 was based of this paper: [Feature Pyramid Network](https://arxiv.org/abs/1612.03144) <br>
+This lecture on knowledge distillation by Chinese University of Hong Kong was also very helpful: [Knowledge Distillation Lecture](https://www.cse.cuhk.edu.hk/~byu/CMSC5743/2024Fall/slides/Mo5-KD.pdf)
