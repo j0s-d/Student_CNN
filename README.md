@@ -76,7 +76,7 @@ python -m Student_CNN
 | **F1** <br> Model Value = 0.5588 | <p align="center"> <img src="model_no_kd/val/f1.jpg" alt="F1 no kd" width="300"> |
 | **Precision** <br> Model Value = 0.5636 | <p align="center"> <img src="model_no_kd/val/precision.jpg" alt="Precision no kd" width="300"> |
 | **Recall** <br> Model Value = 0.5541 | <p align="center"> <img src="model_no_kd/val/recall.jpg" alt="Recall no kd" width="300"> |
-| **Comments** | Training begins to become unstable at ~ epoch 16 (this is the saved model).<br> Precision oscillates as model begins to make more predictions, <br> which then get more precise. |
+| **Comments** | Training begins to become unstable at ~ epoch 17 (this is the saved model).<br> Precision oscillates as model begins to make more predictions, <br> which then get more precise. |
 
 ### Hyperparameters
 | | Student without KD | Student with KD |
@@ -84,7 +84,7 @@ python -m Student_CNN
 | **Loss** | `lambda_box` = 2 <br> `lambda_noobj` = 2 <br> `lambda_wh` = 1 <br> |
 | **Validation** | `confidence_threshold` = 0.8 <br> `nms_threshold` = 0.1 <br> `iou_threshold` = 0.3 |
 | **Training**| `AdamW optimizer lr` = 1e-4 <br> `AdamW weight decay` = 1e-3 <br> `Scheduler` = CosineAnnealing (eta_min: 1e-6) |
-| **Comments**| High confidence threshold gave balance between precision/recall for max f1. <br> More training information in log.txt |
+| **Comments**| High confidence threshold gave balance between precision/recall for max f1. <br> More training information in [training log](model_no_kd/log.txt) |
 
 ## Example Photos
 ### Clear Face
