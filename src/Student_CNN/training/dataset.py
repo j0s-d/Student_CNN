@@ -44,7 +44,8 @@ def filter_annotations(boxes, scale_x, scale_y, min_size =8, max_blur=3, max_occ
             good_boxes.append(annotation)
 
         #return filtered list of annotations
-        return good_boxes
+        removed = len(boxes) - len(good_boxes)
+        return good_boxes, removed
 
 #---------- Dataset class for converting an image + JSON labels into trainable tensors ----------
 
@@ -98,6 +99,9 @@ class FaceAsTensorDataset(Dataset):
         #store original image dimensions
         original_width, original_height = image.size
 
+        total_removed = 0
+        total = 0
+
         #resize image to 128x128 while maintaining aspect ratio, and pad with black if necessary
         #prevents distorted faces
         image.thumbnail((self.input_size, self.input_size))
@@ -112,7 +116,10 @@ class FaceAsTensorDataset(Dataset):
         scale_y = new_height / original_height
 
         #call the filter function to return easier targets
-        boxes = filter_annotations(boxes, scale_x, scale_y)
+        total = len(boxes)
+        boxes, removed = filter_annotations(boxes, scale_x, scale_y)
+        total_removed += removed
+
 
         #create an RGB canvas
         canvas = Image.new("RGB", (self.input_size, self.input_size), (0, 0, 0))  #black padding
@@ -243,4 +250,4 @@ class FaceAsTensorDataset(Dataset):
         medium_target = medium_target.reshape(-1, 5)
         large_target = large_target.reshape(-1, 5)
 
-        return image, small_target, medium_target, large_target
+        return image, small_target, medium_target, large_target, total, total_removed

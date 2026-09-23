@@ -280,15 +280,18 @@ def Validation(model, val_loader, device="cpu"):
     true_positives = 0
     false_positives = 0
     false_negatives = 0
-
+    total = 0
+    total_removed = 0
 
     #disables gradient calculation during validation
     #this saves GPU memory and computation
     with torch.inference_mode():
 
-        for images, small_targets, medium_targets, large_targets in val_loader:
+        for images, small_targets, medium_targets, large_targets, box, removed in val_loader:
 
-            
+            total += int(box.sum())
+            total_removed += int(removed.sum())
+
             #move validation data to device used for training
             images = images.to(
                 device,
@@ -364,7 +367,8 @@ def Validation(model, val_loader, device="cpu"):
         f"Validation_loss = {average_val_loss:.4f}, "
         f"f1 = {f1:.4f}, "
         f"Validation_precision = {precision:.4f}, "
-        f"Validation_recall = {recall:.4f}"
+        f"Validation_recall = {recall:.4f}, "
+        f"Removed {total_removed} / {total} bounding boxes in validation set"
     )
 
     return average_val_loss, precision, recall, f1
@@ -510,7 +514,13 @@ def main():
         #initialize batch counter, to monitor training progress
         current_batch = 0
 
-        for images, small_targets, medium_targets, large_targets in train_loader:
+        total = 0
+        total_removed = 0
+
+        for images, small_targets, medium_targets, large_targets, box, removed in train_loader:
+
+            total += int(box.sum())
+            total_removed += int(removed.sum())
 
             #move data to device for efficiency, and to ensure model and tensors are on the same device
             #non_blocking=True allows data transfer to be asynchronous, so CPU can continue loading data while GPU is training the model
@@ -584,6 +594,7 @@ def main():
             #format is "metric_name = metric_value", with 4 decimal places for loss, precision, and recall
             f"training_loss = {average_loss:.4f}, "
             f"training_loss_kd = {average_loss_kd:.4f}, "
+            f"Removed {total_removed} / {total} bounding boxes in training set"
         )
 
         #update learning rate after each epoch, to help the model converge to a minimum
