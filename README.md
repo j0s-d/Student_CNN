@@ -21,6 +21,8 @@ transferring the performance of a large teacher model into a smaller, faster stu
 For package requirements, see requirements.txt
 
 ### Download WIDER_FACE
+I used a modest filtering function in my dataset script, since many faces in WIDER_FACE are simply too difficult for the YOLO-style detection head/small model and caused very poor performance. However, this is optional and adjustable. <br>
+[dataset script](src/Student_CNN/training/dataset.py)
 
 Training Images:
 - [Google Drive](https://drive.google.com/file/d/15hGDLhsx8bLgLcIRD5DhYt5iBxnjNF1M/view?usp=sharing)
