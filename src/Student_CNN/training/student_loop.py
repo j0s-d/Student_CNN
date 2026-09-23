@@ -146,7 +146,7 @@ def DecodeHead(pred, grid_size):
 
 def IoUAnalysis(predictions, 
                 targets, 
-                confidence_threshold = 0.8, 
+                confidence_threshold = 0.9, 
                 nms_threshold = 0.1, 
                 iou_threshold = 0.3):
     

@@ -1,0 +1,10 @@
+Validation settings:
+confidence_threshold = 0.9, nms_threshold = 0.1, iou_threshold = 0.3
+
+Using device: cuda
+Model device: cuda:0
+Loading checkpoint 
+Loaded checkpoint (epoch 18)
+Validating...
+Validation_loss = 0.6952, f1 = 0.6443, Validation_precision = 0.6470, Validation_recall = 0.6417
+New best teacher saved! 
