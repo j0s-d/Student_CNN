@@ -1,13 +1,13 @@
 # MobileNetV2 Knowledge Distillation- PyTorch
 
 ## Overview
-Knowledge distillation for efficient computer vision in the context of facial recognition and location — 
-transferring the performance of a large teacher model into a smaller, faster student model better suited for operation on edge devices.
+Can knowledge distillation allow a lightweight MobileNetV2-based face detector to retain the performance of a larger teacher model, while reducing computational cost for application on edge devices?
 <br>
-| | Teacher | Student without KD | Student with KD |
-| --- | --- | --- | --- |
-| **Trainable Parameters** | 1,990,415 | 1,338,815 | 1,338,815 |
-| **F1 performance on <br> WIDER_FACE dataset**| 0.6443 | 0.5588 | 0.6202 |
+| Model | Trainable Parameters | F1 | Precision | Recall | FPS (Raspberry Pi 4b) | Latency (Raspberry Pi 4b) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Teacher | 1,990,415 | 0.6443| 0.6470 | 0.6417 | `To come...` | `To come...` |
+| Student without KD | 1,338,815 | 0.5588 | 0.5636 | 0.5541 | `To come...` | `To come...` |
+| Student with KD | 1,338,815 | 0.6202 | 0.6209 | 0.6194 | `To come...` | `To come...` |
 > [!NOTE]
 > $`F1 = \frac{2 \times precision \times recall}{precision + recall} `$
 > 
@@ -22,6 +22,9 @@ For package requirements, see requirements.txt
 
 ### Download WIDER_FACE
 I used a modest filtering function in my dataset script, since many faces in WIDER_FACE are simply too difficult for the YOLO-style detection head/small model and caused very poor performance. However, this is optional and adjustable. <br>
+Removed 94232 / 159420 bounding boxes in training set (59%) <br>
+Removed 23340 / 39708 bounding boxes in validation set (59%) <br>
+These statistics are slightly misleading because faces that are filtered are usually in large crowds which can contain hundreds of boxes. <br>
 [dataset script](src/Student_CNN/training/dataset.py)
 
 Training Images:
