@@ -22,7 +22,7 @@ The experiments were conducted on:
 - Python 3.10
 - PyTorch 2.13.0
 - CUDA 13.2
-- NVIDIA GPU: RTX 5060 Laptop GPU
+- NVIDIA GPU: RTX 5060 Laptop GPU <br>
 For detailed package requirements, see requirements.txt
 
 ### Download WIDER_FACE
