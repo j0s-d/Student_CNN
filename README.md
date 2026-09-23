@@ -18,7 +18,12 @@ Can knowledge distillation allow a lightweight MobileNetV2-based face detector t
 
 ## Get Started
 ### Requirements
-For package requirements, see requirements.txt
+The experiments were conducted on:
+- Python 3.10
+- PyTorch 2.13.0
+- CUDA 13.2
+- NVIDIA GPU: RTX 5060 Laptop GPU
+For detailed package requirements, see requirements.txt
 
 ### Download WIDER_FACE
 I used a modest filtering function in my dataset script, since many faces in WIDER_FACE are simply too difficult for the YOLO-style detection head/small model and caused very poor performance. However, this is optional and adjustable. <br>
