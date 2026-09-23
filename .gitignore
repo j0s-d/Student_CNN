@@ -6,4 +6,4 @@ data/WIDER_JSON/train/labels/*
 data/WIDER_JSON/val/images/*
 data/WIDER_JSON/val/labels/*
 desktop.ini
-src/Student_CNN/desktop.ini
+src/desktop.ini
