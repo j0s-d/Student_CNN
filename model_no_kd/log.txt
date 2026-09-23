@@ -3,10 +3,10 @@ Filter settings:
 min_size =8, max_blur=3, max_occlusion=4, max_pose=3
 
 Loss settings:                  
-lambda_box=2.0, lambda_noobj=2, lambda_wh = 1,  
+lambda_box=2.0, lambda_noobj=2, lambda_wh = 1  
 
 Validation settings:
-confidence_threshold = 0.8, nms_threshold = 0.1, iou_threshold = 0.3):
+confidence_threshold = 0.8, nms_threshold = 0.1, iou_threshold = 0.3
 
 Using device: cuda
 No student checkpoint found 

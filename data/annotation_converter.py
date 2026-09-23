@@ -164,12 +164,12 @@ def convert_wider_to_json(annotation_file, image_root, output_root):
 
 #training conversion of WIDER FACE annotations to JSON format
 convert_wider_to_json(
-    annotation_file = "",
-    output_root = "",
-    image_root= ""
+    annotation_file = "", #your file containing the annotations
+    output_root = "", #your output root file, which should contain these folders: 'labels', 'images'
+    image_root= "" #your file containing the images
 )
 
-#validation conversion of WIDER FACE annotations to JSON format
+#validation conversion of WIDER FACE annotations to JSON format, use same structure as before
 convert_wider_to_json(
     annotation_file = "",
     output_root = "",

@@ -84,7 +84,7 @@ def Validation(model, val_loader, device="cpu"):
             predictions = torch.cat([small_faces, medium_faces, large_faces], dim=1)
 
             #calculate validation loss
-            loss = detection_loss(
+            loss, _ = detection_loss(
                 predictions,
                 targets
             )
@@ -210,7 +210,7 @@ def main():
     #creates an AdamW optimiser for the model parameters
     #weight decay is a regularisation technique that reduces overfitting by penalising large weights
     #this prevents the model from memorising the training data, and encourages it to learn generalisable features
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-2)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-3)
 
     #creates a cosine annealing learning rate scheduler 
     #reduces the learning rate over time to help the model converge to a minimum
@@ -284,7 +284,7 @@ def main():
             predictions = torch.cat([small_faces, medium_faces, large_faces], dim=1)
 
             #calculate loss between predictions and targets
-            loss = detection_loss(predictions, targets)
+            loss, _ = detection_loss(predictions, targets)
 
             #backward pass through model to calculate gradients of the loss with respect to the model parameters
             #if a weight causes a large loss, its gradient will be large

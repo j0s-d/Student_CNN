@@ -83,7 +83,7 @@ def apply_nms(boxes, scores, iou_threshold=0.1):
 
 #---------- Decode model outputs into bounding box coordinates ----------
 
-def decode_predictions(prediction, grid_size, confidence_threshold=0.8):
+def decode_predictions(prediction, grid_size, confidence_threshold=0.9):
 
     #check if single image, and store in a variable
     single_image = prediction.dim() == 2

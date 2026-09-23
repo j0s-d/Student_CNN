@@ -25,7 +25,7 @@ def main():
     model.to(device)
 
     #opens image
-    image_file = package_root / "test_images" / "soldier1.jpg"
+    image_file = package_root / "test_images" / "handshake.jpg"
     test_image = cv2.imread(image_file, cv2.IMREAD_COLOR)
 
     if test_image is None:
@@ -35,7 +35,7 @@ def main():
     rgb = cv2.cvtColor(test_image, cv2.COLOR_BGR2RGB)
         
     #stores output location
-    output_file = package_root / "test_images" / "output_soldier1.png"
+    output_file = package_root / "test_images" / "output_handshake.png"
 
     #copy original image
     original_frame = test_image.copy()

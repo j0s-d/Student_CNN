@@ -11,7 +11,7 @@ def detection_loss(prediction,
                    lambda_noobj=2, 
                    lambda_wh = 1, 
                    lambda_kd=0.1, 
-                   temperature=5 
+                   temperature=3 
                    ):
 
     #seperate the objectness score and bounding box coordinates from the prediction and target tensors
@@ -104,11 +104,12 @@ def detection_loss(prediction,
         #calculate soft targets, weighted by a temperature parameter
         teacher_soft_obj = torch.sigmoid(teach_obj / temperature)
 
-        #apply cross entropy to probabilities, weighted by temperature squared
-        obj_knowdiss_loss = func.binary_cross_entropy(
+        #apply cross entropy to probabilities, scaled by temperature squared
+        obj_knowdiss_loss = func.binary_cross_entropy_with_logits(
             student_soft_obj,
-            teacher_soft_obj
-        ) * temperature ** 2
+            teacher_soft_obj,
+            reduction='mean'
+        ) * (temperature ** 2)
 
         if positive.any():
 
@@ -144,4 +145,4 @@ def detection_loss(prediction,
     total = (1 - lambda_kd) * (obj_loss + lambda_box * box_loss) + lambda_kd * knowdiss_loss
         
 
-    return total 
+    return total, knowdiss_loss

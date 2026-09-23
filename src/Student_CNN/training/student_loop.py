@@ -96,21 +96,21 @@ def DecodeHead(pred, grid_size):
         f"Expected 5 prediction values, got {C}"
     )
 
-    # reshape flattened head back to grid
+    #reshape flattened head back to grid
     pred = pred.reshape(B, grid_size, grid_size, 5)
 
-    # objectness
+    #objectness
     confidence = torch.sigmoid(pred[..., 0])
 
-    # relative position inside cell
+    #relative position inside cell
     tx = torch.sigmoid(pred[..., 1])
     ty = torch.sigmoid(pred[..., 2])
 
-    # width / height relative to image
+    #width / height relative to image
     width = torch.sigmoid(pred[..., 3])
     height = torch.sigmoid(pred[..., 4])
 
-    # create grid coordinates
+    #create grid coordinates
     device = pred.device
 
     grid_y, grid_x = torch.meshgrid(
@@ -122,11 +122,12 @@ def DecodeHead(pred, grid_size):
     grid_x = grid_x.float()
     grid_y = grid_y.float()
 
-    # convert cell-relative coordinates
-    # into image-relative coordinates
+    #convert cell-relative coordinates
+    #into image-relative coordinates
     cx = (grid_x + tx) / grid_size
     cy = (grid_y + ty) / grid_size
 
+    #stack boxes into a tensor
     decoded = torch.stack(
         [
             confidence,
@@ -138,6 +139,7 @@ def DecodeHead(pred, grid_size):
         dim=-1
     )
 
+    #puts predictions in form [B, N, C]
     return decoded.reshape(B, -1, 5)
 
 #---------- Decode precitions for validation metrics ----------
@@ -317,7 +319,7 @@ def Validation(model, val_loader, device="cpu"):
             raw_predictions = torch.cat([small_faces, medium_faces, large_faces], dim=1)
             
             #calculate validation loss
-            loss = detection_loss(
+            loss, _ = detection_loss(
                 raw_predictions,
                 targets
             )
@@ -378,7 +380,7 @@ def main():
     EPOCHS = 100
 
     #knowledge distillation bool
-    know_diss = False
+    know_diss = True
 
     #set best model parameters
     best_f1 = float(0)
@@ -388,7 +390,9 @@ def main():
         csv_directory = root_directory / "training" / "history_kd"
     else:
         csv_directory = root_directory / "training" / "history"
+    
     history_train_loss = []
+    history_train_loss_kd = []
     history_val_loss = []
     history_f1 = []
     history_precision = []
@@ -501,6 +505,7 @@ def main():
 
         #set running loss and accuracy to 0 for each epoch, to calculate average at the end of the epoch
         running_loss = 0.0
+        running_loss_kd = 0.0
 
         #initialize batch counter, to monitor training progress
         current_batch = 0
@@ -550,7 +555,7 @@ def main():
             raw_predictions = torch.cat([small_faces, medium_faces, large_faces], dim=1)
 
             #calculate loss between predictions and targets
-            loss = detection_loss(raw_predictions, targets, teacher_prediction=teacher_predictions)
+            loss, know_diss_loss = detection_loss(raw_predictions, targets, teacher_prediction=teacher_predictions)
 
             #backward pass through model to calculate gradients of the loss with respect to the model parameters
             #if a weight causes a large loss, its gradient will be large
@@ -561,20 +566,24 @@ def main():
 
             #accumulate loss for the epoch, to calculate average loss at the end of the epoch
             running_loss += loss.item()
+            running_loss_kd += know_diss_loss.item()
 
             #increment batch counter
             current_batch += 1
 
         #calculate average loss for the epoch, to monitor training progress
         average_loss = (running_loss / len(train_loader))
+        average_loss_kd = (running_loss_kd / len(train_loader))
 
         #append to history list
         history_train_loss.append(average_loss)
+        history_train_loss_kd.append(average_loss_kd)
 
         #print training and validation metrics for the epoch, to monitor training progress
         print(
             #format is "metric_name = metric_value", with 4 decimal places for loss, precision, and recall
             f"training_loss = {average_loss:.4f}, "
+            f"training_loss_kd = {average_loss_kd:.4f}, "
         )
 
         #update learning rate after each epoch, to help the model converge to a minimum
@@ -638,24 +647,30 @@ def main():
     plt.show()
 
     plt.figure(2)
+    plt.plot(history_train_loss_kd, 'm-')
+    plt.title("Training Loss KD")
+    plt.savefig(csv_directory / "train/train_loss_kd.jpg")
+    plt.show()
+
+    plt.figure(3)
     plt.plot(history_val_loss, 'g-')
     plt.title("Validation Loss")
     plt.savefig(csv_directory / "val/val_loss.jpg")
     plt.show()
 
-    plt.figure(2)
+    plt.figure(4)
     plt.plot(history_f1, 'p-')
     plt.title("F1")
     plt.savefig(csv_directory / "val/f1.jpg")
     plt.show()
 
-    plt.figure(3)
+    plt.figure(5)
     plt.plot(history_precision, 'r-')
     plt.title("Precision")
     plt.savefig(csv_directory / "val/precision.jpg")
     plt.show()
 
-    plt.figure(4)
+    plt.figure(6)
     plt.plot(history_recall, 'b-')
     plt.title("Recall")
     plt.savefig(csv_directory / "val/recall.jpg")
@@ -664,6 +679,7 @@ def main():
 
     #save history lists as csv files
     np.savetxt(csv_directory / "train/train_loss.csv", history_train_loss, delimiter=",")
+    np.savetxt(csv_directory / "train/train_loss_kd.csv", history_train_loss_kd, delimiter=",")
     np.savetxt(csv_directory / "val/val_loss.csv", history_val_loss, delimiter=",")
     np.savetxt(csv_directory / "val/f1.csv", history_f1, delimiter=",")
     np.savetxt(csv_directory / "val/precision.csv", history_precision, delimiter=",")
