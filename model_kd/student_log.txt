@@ -6,7 +6,7 @@ Loss settings:
 lambda_box=2.0, lambda_noobj=2, lambda_wh=1, lambda_kd=0.1, temperature=3   
 
 Validation settings:
-confidence_threshold = 0.8, nms_threshold = 0.1, iou_threshold = 0.3
+confidence_threshold = 0.9, nms_threshold = 0.1, iou_threshold = 0.3
 
 Using device: cuda
 No student checkpoint found 
