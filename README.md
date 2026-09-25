@@ -27,11 +27,9 @@ The experiments were conducted on:
 For detailed package requirements, see requirements.txt
 
 ### Download WIDER_FACE
-I used a modest filtering function in my dataset script, since many faces in WIDER_FACE are simply too difficult for the YOLO-style detection head/small model and caused very poor performance. However, this is optional and adjustable. <br>
-Removed 94232 / 159420 bounding boxes in training set (59%) <br>
-Removed 23340 / 39708 bounding boxes in validation set (59%) <br>
-These statistics are slightly misleading because faces that are filtered are usually in large crowds which can contain hundreds of boxes. <br>
-[dataset script](src/Student_CNN/training/dataset.py)
+[Disclaimer] <br>
+WIDER FACE contains a large proportion of extremely small and heavily occluded faces. These examples are substantially more challenging for a lightweight YOLO-style detector head, which can only detect one face per grid cell. The dataset was therefore filtered using a predefined bounding-box criteria to focus the experiment on faces that the student architecture could reasonably be expected to detect at the target resolution. <br>59% of faces were removed, which limits the extent to which the results can be generalised to the full WIDER FACE dataset. However, the same filtering procedure was applied independently of whether knowledge distillation was used, so the primary comparison between the KD and non-KD student model remains controlled and valid. <br>
+Edit filter here: [dataset script](src/Student_CNN/training/dataset.py)
 
 Training Images:
 - [Google Drive](https://drive.google.com/file/d/15hGDLhsx8bLgLcIRD5DhYt5iBxnjNF1M/view?usp=sharing)
