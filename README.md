@@ -3,11 +3,11 @@
 ## Overview
 Can knowledge distillation allow a lightweight MobileNetV2-based face detector to retain the performance of a larger teacher model, while reducing computational cost for application on edge devices?
 <br>
-| Model | Trainable Parameters | Model Size (mb) | F1 | Precision | Recall | FPS (Raspberry Pi 4b) | Latency (Raspberry Pi 4b) |
+| Model | Trainable Parameters | Model Size (Mb) | F1 | Precision | Recall | FPS (Raspberry Pi 4b) | Latency (Raspberry Pi 4b) |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Teacher | 1,990,415 | 7775 | 0.6443| 0.6470 | 0.6417 | `To come...` | `To come...` |
-| Student without KD | 5230 | 1,338,815 | 0.5588 | 0.5636 | 0.5541 | `To come...` | `To come...` |
-| Student with KD | 5230 | 1,338,815 | 0.6202 | 0.6209 | 0.6194 | `To come...` | `To come...` |
+| Student without KD | 1,338,815 | 5230 | 0.5588 | 0.5636 | 0.5541 | `To come...` | `To come...` |
+| Student with KD | 1,338,815 | 5230 | 0.6202 | 0.6209 | 0.6194 | `To come...` | `To come...` |
 > [!NOTE]
 > $`F1 = \frac{2 \times precision \times recall}{precision + recall} `$
 > 
